@@ -12,33 +12,11 @@ CONFIG="/atlas/workspace/config.yml"
 LOG="/atlas/logs/reply-delivery.log"
 POLL_INTERVAL="${REPLY_POLL_INTERVAL:-10}"
 
-# Read Signal number from config
-SIGNAL_NUMBER="${SIGNAL_NUMBER:-}"
-if [ -z "$SIGNAL_NUMBER" ] && [ -f "$CONFIG" ]; then
-  SIGNAL_NUMBER=$(python3 -c "
-import yaml
-with open('$CONFIG') as f:
-  cfg = yaml.safe_load(f)
-print(cfg.get('signal', {}).get('number', ''))
-" 2>/dev/null || echo "")
-fi
-
 deliver_signal() {
-  local reply_to="$1"
-  local content="$2"
+  local reply_file="$1"
 
-  if [ -z "$SIGNAL_NUMBER" ]; then
-    echo "[$(date)] ERROR: No Signal number configured, cannot deliver" | tee -a "$LOG"
-    return 1
-  fi
-
-  if command -v signal-cli &>/dev/null; then
-    signal-cli -a "$SIGNAL_NUMBER" send -m "$content" "$reply_to" 2>&1 | tee -a "$LOG"
-    echo "[$(date)] Signal reply delivered to $reply_to" | tee -a "$LOG"
-  else
-    echo "[$(date)] ERROR: signal-cli not installed. Reply pending for $reply_to" | tee -a "$LOG"
-    return 1
-  fi
+  # Delegate to signal add-on which handles delivery and message tracking
+  python3 /atlas/app/integrations/signal/signal-addon.py deliver "$reply_file" 2>&1 | tee -a "$LOG"
 }
 
 deliver_email() {
@@ -56,9 +34,8 @@ process_replies() {
   for reply_file in "$REPLIES_DIR"/*.json; do
     [ -f "$reply_file" ] || continue
 
-    local channel reply_to content
+    local channel content
     channel=$(python3 -c "import json; d=json.load(open('$reply_file')); print(d.get('channel',''))" 2>/dev/null || echo "")
-    reply_to=$(python3 -c "import json; d=json.load(open('$reply_file')); print(d.get('reply_to',''))" 2>/dev/null || echo "")
     content=$(python3 -c "import json; d=json.load(open('$reply_file')); print(d.get('content',''))" 2>/dev/null || echo "")
 
     if [ -z "$channel" ] || [ -z "$content" ]; then
@@ -69,12 +46,11 @@ process_replies() {
     local success=false
     case "$channel" in
       signal)
-        if deliver_signal "$reply_to" "$content"; then
+        if deliver_signal "$reply_file"; then
           success=true
         fi
         ;;
       email)
-        # Pass the whole file — email-send.py reads thread state for headers
         if deliver_email "$reply_file"; then
           success=true
         fi

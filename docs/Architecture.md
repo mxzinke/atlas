@@ -237,6 +237,8 @@ read-only workspace access and MCP tools.
 ```
 Event arrives (cron schedule / webhook POST / manual run)
   → trigger.sh <name> [payload] [session-key]
+  → Acquire session lock (mkdir, atomic) for (name, session-key)
+    - Lock busy? → skip (message already in inbox, running session will pick it up)
   → Read trigger config from DB (prompt, session_mode)
   → Spawn trigger Claude session:
     - ephemeral: always a new session
@@ -246,8 +248,11 @@ Event arrives (cron schedule / webhook POST / manual run)
     Option A: Handles directly (reply_send, MCP actions) → done
     Option B: Escalates to main via inbox_write (1..N tasks)
   → inbox_write touches .wake → watcher resumes main session
-  → Stop hook detects ATLAS_TRIGGER → exit 0 (no inbox loop)
+  → Stop hook detects ATLAS_TRIGGER:
+    - Pending messages for this channel/key? → output next, exit 2 (continue)
+    - No pending? → exit 0
   → trigger.sh saves session ID to trigger_sessions (if persistent)
+  → Lock released (trap EXIT)
 ```
 
 ### Escalation Flow

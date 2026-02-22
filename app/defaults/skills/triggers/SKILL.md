@@ -87,7 +87,9 @@ inbox_write(channel="task", sender="trigger:deploy", content="Update CHANGELOG f
 inbox_write(channel="task", sender="trigger:deploy", content="Run post-deploy smoke tests")
 ```
 
-## Signal Integration
+## Signal Integration (Add-on)
+
+The Signal Communication Add-on (`app/integrations/signal/signal-addon.py`) consolidates all Signal operations into a single module with its own per-number SQLite database.
 
 Quick setup — 4 steps:
 
@@ -109,7 +111,20 @@ Quick setup — 4 steps:
    ```
 4. **Start services**: `signal-receiver.sh` + `reply-delivery.sh` (see `app/integrations/`)
 
-Flow: signal-cli → receiver script → trigger.sh (per contact) → reply_send → reply-delivery → signal-cli send
+Flow: signal-cli → signal-addon.py → trigger.sh (per contact, non-blocking) → reply_send → reply-delivery → signal-addon.py deliver → signal-cli send
+
+### Direct messaging
+
+```bash
+# Send a message
+signal-addon.py send +491701234567 "Hello!"
+
+# List contacts
+signal-addon.py contacts
+
+# Conversation history
+signal-addon.py history +491701234567
+```
 
 ## Email Integration (Add-on)
 

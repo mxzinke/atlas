@@ -8,11 +8,13 @@ Atlas supports Signal and Email as communication channels. Each integration writ
 External Channel          Atlas
 ═══════════════           ═════
 
-Signal message ──▸ signal-receiver.sh
+Signal message ──▸ signal-addon.py receive
                     │
-                    ├─▸ INSERT INTO inbox (channel=signal, reply_to=sender)
+                    ├─▸ UPDATE signal.db contacts + messages tables
+                    ├─▸ INSERT INTO atlas inbox (channel=signal, reply_to=sender)
                     │
                     └─▸ trigger.sh signal-chat <payload+inbox_msg_id> <sender>
+                         (non-blocking, parallel per contact)
                                           │
                                     Trigger session
                                     (persistent, per sender)
@@ -25,9 +27,7 @@ Signal message ──▸ signal-receiver.sh
                       replies/N.json                  ▼
                               │               Main session
                    reply-delivery.sh
-                              │
-                              ▼
-                      signal-cli send
+                      └─▸ signal-addon.py deliver → signal-cli send
 
 
 Email (IMAP) ──▸ email-addon.py poll
@@ -52,7 +52,9 @@ Email (IMAP) ──▸ email-addon.py poll
                       └─▸ email-addon.py deliver → SMTP with threading headers
 ```
 
-## Signal
+## Signal Add-on
+
+The Signal Communication Add-on (`app/integrations/signal/signal-addon.py`) is a unified module for all Signal operations. It has its own SQLite database per phone number for contact and message tracking.
 
 ### Prerequisites
 
@@ -109,14 +111,39 @@ trigger_create:
 /atlas/app/integrations/reply-delivery.sh
 ```
 
+### CLI Usage
+
+```bash
+# Receive messages (fires triggers non-blocking)
+signal-addon.py receive --once
+signal-addon.py receive              # continuous mode
+
+# Send a message directly
+signal-addon.py send +491701234567 "Hello!"
+
+# List known contacts
+signal-addon.py contacts
+
+# Show conversation history
+signal-addon.py history +491701234567
+```
+
+### Signal Database
+
+Each configured number gets its own SQLite database at `workspace/inbox/signal/<number>.db` with WAL mode:
+
+| Table | Purpose |
+|-------|---------|
+| `contacts` | Known contacts: number, name, message_count, first/last_seen |
+| `messages` | All messages (in + out): body, timestamp, contact association |
+
 ### How It Works
 
-1. `signal-receiver.sh` polls `signal-cli receive --json`
-2. Each message is written to the inbox (channel=signal, reply_to=sender number)
-3. `trigger.sh signal-chat '<payload>' '<sender>'` fires with `inbox_message_id` in payload
-4. Trigger session calls `inbox_mark(inbox_message_id, "processing")` then `reply_send(inbox_message_id, "response")`
-5. `reply_send` writes `replies/N.json` with `reply_to=<sender number>`
-6. `reply-delivery.sh` sends via `signal-cli send -m <content> <sender>`
+1. `signal-addon.py receive` polls `signal-cli receive --json`
+2. Each message is stored in signal.db and written to atlas inbox (channel=signal, reply_to=sender)
+3. Triggers fire **non-blocking** per contact via `Popen`
+4. If a trigger session is already running for that contact, the lock in `trigger.sh` prevents a duplicate — the running session picks up the new message via the stop hook
+5. `reply_send` → `replies/N.json` → `reply-delivery.sh` → `signal-addon.py deliver` → `signal-cli send`
 
 ### Whitelist
 
@@ -266,6 +293,29 @@ When multiple emails from different threads arrive in the same poll cycle:
 
 `email.whitelist` accepts full addresses (`alice@example.com`) or domains (`example.org`). Empty = accept all.
 
+## Message Queuing (Concurrent Messages)
+
+When a message arrives while a trigger session is already running for the same contact/thread:
+
+1. The message is written to the atlas inbox (always happens first)
+2. `trigger.sh` attempts to acquire a session lock (`mkdir` — atomic)
+3. **Lock acquired**: new session spawns, processes the message
+4. **Lock busy**: skip — the message is already in the inbox
+
+The running session picks up queued messages automatically:
+
+```
+Message 1 arrives → trigger.sh acquires lock → session starts processing
+Message 2 arrives → trigger.sh sees lock → skips (message in inbox)
+Message 3 arrives → trigger.sh sees lock → skips (message in inbox)
+Session finishes Message 1 → stop hook queries inbox for pending messages
+  → finds Message 2 → exit 2 (continue) → processes Message 2
+  → stop hook → finds Message 3 → exit 2 → processes Message 3
+  → stop hook → no more pending → exit 0 → lock released
+```
+
+This works identically for Signal (per contact), Email (per thread), and any future integration. The key is that `reply_to` in the inbox matches the trigger's session key (`ATLAS_TRIGGER_SESSION_KEY`).
+
 ## Reply Delivery
 
 Both Signal and Email use the same delivery mechanism:
@@ -281,8 +331,8 @@ Both Signal and Email use the same delivery mechanism:
    }
    ```
 3. `reply-delivery.sh` picks up the file and routes by channel:
-   - `signal` → `signal-cli send -m <content> <reply_to>`
-   - `email` → `email-addon.py deliver` sends SMTP with proper threading headers
+   - `signal` → `signal-addon.py deliver` → `signal-cli send` (tracks in signal.db)
+   - `email` → `email-addon.py deliver` → SMTP with proper threading headers (tracks in email.db)
 4. Delivered files are moved to `replies/archive/`
 
 Start the delivery daemon:
@@ -309,6 +359,19 @@ echo 'apt-get install -y signal-cli' >> /atlas/workspace/user-extensions.sh
 # 4. Start services (add to supervisord):
 # /atlas/app/integrations/signal-receiver.sh
 # /atlas/app/integrations/reply-delivery.sh
+```
+
+### Send a Signal Message Directly
+
+```bash
+# Send a message (signal-cli must be installed + configured):
+python3 /atlas/app/integrations/signal/signal-addon.py send +491701234567 "Hello!"
+
+# List contacts:
+python3 /atlas/app/integrations/signal/signal-addon.py contacts
+
+# Conversation history:
+python3 /atlas/app/integrations/signal/signal-addon.py history +491701234567
 ```
 
 ### Enable Email in 4 Steps
