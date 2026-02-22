@@ -17,7 +17,7 @@ set -euo pipefail
 TRIGGER_NAME="${1:?Usage: trigger.sh <trigger-name> [payload] [session-key]}"
 DB="/atlas/workspace/inbox/atlas.db"
 WORKSPACE="/atlas/workspace"
-PROMPT_TEMPLATE="/atlas/app/prompts/trigger-session.md"
+PROMPT_DIR="/atlas/app/prompts"
 LOG="/atlas/logs/trigger-${TRIGGER_NAME}.log"
 
 if [ ! -f "$DB" ]; then
@@ -101,9 +101,17 @@ fi
 
 echo "[$(date)] Trigger firing: $TRIGGER_NAME (mode=$SESSION_MODE, key=$SESSION_KEY, channel=$CHANNEL)" | tee -a "$LOG"
 
-# Build system prompt from template
+# Build system prompt from channel-specific template (fallback to generic)
+PROMPT_TEMPLATE=""
+for candidate in "$PROMPT_DIR/trigger-${CHANNEL}.md" "$PROMPT_DIR/trigger-session.md"; do
+  if [ -f "$candidate" ]; then
+    PROMPT_TEMPLATE="$candidate"
+    break
+  fi
+done
+
 SYSTEM_PROMPT=""
-if [ -f "$PROMPT_TEMPLATE" ]; then
+if [ -n "$PROMPT_TEMPLATE" ]; then
   SYSTEM_PROMPT=$(cat "$PROMPT_TEMPLATE" | sed "s|{{trigger_name}}|${TRIGGER_NAME}|g" | sed "s|{{channel}}|${CHANNEL}|g")
 fi
 

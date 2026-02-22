@@ -55,6 +55,83 @@ Examples:
 | `trigger_update` | Update fields (description, schedule, prompt, session_mode, enabled) |
 | `trigger_delete` | Delete by name |
 
+## Activation: What Happens After trigger_create
+
+### Cron Triggers → fully automatic
+
+1. `trigger_create(type="cron", ...)` inserts the trigger in DB
+2. `sync-crontab.ts` is called automatically → writes cron entry to `workspace/crontab`
+3. supercronic detects the file change → trigger runs on schedule
+4. **Nothing else needed.** Claude just calls `trigger_create`.
+
+### Webhook Triggers → endpoint ready immediately
+
+1. `trigger_create(type="webhook", ...)` inserts the trigger in DB
+2. HTTP endpoint is live at `http://<host>:8080/api/webhook/<name>`
+3. External services POST to this URL → message goes to inbox → main session wakes
+4. **Nothing else needed** for pure webhooks.
+
+### Signal / Email Triggers → need polling cron entry
+
+For Signal and Email, a **poll process** must run to check for new messages. This is NOT automatic — Claude must add a cron entry after creating the trigger.
+
+**Signal setup (3 steps Claude performs):**
+
+```bash
+# Step 1: Create trigger
+trigger_create(
+  name="signal-chat",
+  type="webhook",
+  session_mode="persistent",
+  channel="signal",
+  prompt="New Signal message:\n\n{{payload}}"
+)
+
+# Step 2: Add poll to crontab (above the auto-generated marker)
+# Edit /atlas/workspace/crontab and add BEFORE the marker line:
+* * * * *  python3 /atlas/app/integrations/signal/signal-addon.py poll --once 2>&1 >> /atlas/logs/signal.log
+
+# Step 3: Add reply delivery to crontab:
+* * * * *  /atlas/app/integrations/reply-delivery.sh --once 2>&1 >> /atlas/logs/reply-delivery.log
+```
+
+**Email setup (3 steps Claude performs):**
+
+```bash
+# Step 1: Create trigger
+trigger_create(
+  name="email-handler",
+  type="webhook",
+  session_mode="persistent",
+  channel="email",
+  prompt="New email:\n\n{{payload}}"
+)
+
+# Step 2: Add poll to crontab:
+*/2 * * * *  python3 /atlas/app/integrations/email/email-addon.py poll --once 2>&1 >> /atlas/logs/email.log
+
+# Step 3: Add reply delivery to crontab (if not already there):
+* * * * *  /atlas/app/integrations/reply-delivery.sh --once 2>&1 >> /atlas/logs/reply-delivery.log
+```
+
+**Important**: Cron entries go **above** the `# === AUTO-GENERATED TRIGGERS` marker in `workspace/crontab`. sync-crontab.ts preserves everything above the marker.
+
+## Channel-Specific Prompts
+
+trigger.sh automatically selects the right prompt template based on channel:
+
+| Channel | Prompt Template | Style |
+|---------|----------------|-------|
+| `signal` | `app/prompts/trigger-signal.md` | Conversational, short, mobile-friendly |
+| `email` | `app/prompts/trigger-email.md` | Professional, structured, with greeting/sign-off |
+| *(other)* | `app/prompts/trigger-session.md` | Generic filter/escalation |
+
+The trigger's `prompt` field (with `{{payload}}`) is appended after the system prompt template. Claude does **not** need to include reply instructions in the trigger prompt — the template handles that.
+
+## IPC Socket Injection
+
+When a message arrives while a trigger session is already running for the same key, trigger.sh injects it directly via Claude Code's IPC socket (`/tmp/claudec-<session_id>.sock`). The message arrives during the run — no stop hook, no restart.
+
 ## Creating a Trigger
 
 ```
@@ -89,37 +166,13 @@ inbox_write(channel="task", sender="trigger:deploy", content="Run post-deploy sm
 
 ## Signal Integration (Add-on)
 
-The Signal Communication Add-on (`app/integrations/signal/signal-addon.py`) consolidates all Signal operations into a single module with its own per-number SQLite database.
-
-Quick setup — 4 steps:
-
-1. **Install**: Add `apt-get install -y signal-cli` to `workspace/user-extensions.sh`
-2. **Configure** `workspace/config.yml`:
-   ```yaml
-   signal:
-     number: "+491701234567"
-     whitelist: ["+491709876543"]  # empty = accept all
-   ```
-3. **Create trigger**:
-   ```
-   trigger_create:
-     name: "signal-chat"
-     type: "webhook"
-     session_mode: "persistent"
-     channel: "signal"
-     prompt: "New Signal message:\n\n{{payload}}\n\nRespond conversationally. Escalate complex tasks via inbox_write."
-   ```
-4. **Start services**: `signal-addon.py poll` + `reply-delivery.sh`
-
-Flow: signal-cli → signal-addon.py poll/incoming → trigger.sh (IPC socket inject or spawn) → reply_send → reply-delivery → signal-addon.py deliver → signal-cli send
-
-### Direct usage
+The Signal Add-on (`app/integrations/signal/signal-addon.py`) handles all Signal operations in one module.
 
 ```bash
 # Poll signal-cli for new messages
 signal-addon.py poll --once
 
-# Inject a message directly
+# Inject a message directly (e.g., for testing)
 signal-addon.py incoming +491701234567 "Hello!" --name "Alice"
 
 # Send / contacts / history
@@ -130,46 +183,19 @@ signal-addon.py history +491701234567
 
 ## Email Integration (Add-on)
 
-The Email Communication Add-on (`app/integrations/email/email-addon.py`) consolidates all email operations into a single module with its own per-account SQLite database.
-
-Quick setup — 4 steps:
-
-1. **Configure** `workspace/config.yml`:
-   ```yaml
-   email:
-     imap_host: "imap.gmail.com"
-     smtp_host: "smtp.gmail.com"
-     username: "atlas@example.com"
-     password_file: "/atlas/workspace/secrets/email-password"
-   ```
-2. **Store password**: `echo "app-password" > /atlas/workspace/secrets/email-password`
-3. **Create trigger**:
-   ```
-   trigger_create:
-     name: "email-handler"
-     type: "webhook"
-     session_mode: "persistent"
-     channel: "email"
-     prompt: "New email:\n\n{{payload}}\n\nRespond professionally. Escalate complex tasks via inbox_write."
-   ```
-4. **Start services**: `email-addon.py poll` + `reply-delivery.sh`
-
-Flow: IMAP poll → email-addon.py poll → trigger.sh (IPC socket inject or spawn) → reply_send → reply-delivery → email-addon.py deliver → SMTP
-
-Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one session.
-
-### Direct email sending
+The Email Add-on (`app/integrations/email/email-addon.py`) handles all email operations in one module.
 
 ```bash
-# Send a new email
+# Poll IMAP for new emails
+email-addon.py poll --once
+
+# Send / reply / threads
 email-addon.py send recipient@example.com "Subject" "Body text"
-
-# Reply to an existing thread
 email-addon.py reply <thread_id> "Reply body"
-
-# List threads
 email-addon.py threads
 ```
+
+Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one persistent session.
 
 ## Prompt Fallback
 
@@ -181,7 +207,8 @@ workspace/triggers/cron/<trigger-name>/event-prompt.md
 ## Crontab Sync
 
 Cron triggers are automatically synced to `workspace/crontab`:
-- **Static** (above `# AUTO-GENERATED`): manual entries
+- **Static** (above `# AUTO-GENERATED`): manual entries, poller cron jobs
 - **Dynamic** (below): auto-generated from enabled cron triggers
 
-No manual crontab editing needed — just use the MCP tools.
+No manual crontab editing needed for cron triggers — just use `trigger_create`.
+For Signal/Email pollers, add entries to the static section above the marker.

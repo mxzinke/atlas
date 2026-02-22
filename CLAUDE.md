@@ -52,9 +52,9 @@ Atlas is a containerized autonomous agent system built on Claude Code. It uses a
 | `app/triggers/sync-crontab.ts` | Auto-generates crontab from DB triggers |
 | `app/triggers/cron/` | Cron-specific scripts (daily-cleanup, event) |
 | `app/integrations/` | Reply delivery daemon |
-| `app/integrations/signal/` | Signal Communication Add-on (receive, send, contacts, history) |
-| `app/integrations/email/` | Email Communication Add-on (poll, send, reply, thread tracking) |
-| `app/prompts/` | Prompt templates (incl. trigger-session.md) |
+| `app/integrations/signal/` | Signal Add-on (poll, incoming, send, contacts, history) |
+| `app/integrations/email/` | Email Add-on (poll, send, reply, thread tracking) |
+| `app/prompts/` | Prompt templates: trigger-signal.md, trigger-email.md, trigger-session.md |
 | `app/defaults/` | Default config.yml and crontab |
 
 ## Denylist
