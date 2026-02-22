@@ -146,18 +146,19 @@ CREATE TABLE IF NOT EXISTS triggers (
   webhook_secret TEXT,
   prompt TEXT DEFAULT '',
   session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
-  session_id TEXT,
   enabled INTEGER DEFAULT 1,
   last_run TEXT,
   run_count INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS signal_sessions (
+CREATE TABLE IF NOT EXISTS trigger_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sender TEXT UNIQUE NOT NULL,
+  trigger_name TEXT NOT NULL,
+  session_key TEXT NOT NULL,
   session_id TEXT NOT NULL,
-  updated_at TEXT DEFAULT (datetime('now'))
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(trigger_name, session_key)
 );
 
 -- Default trigger: daily cleanup

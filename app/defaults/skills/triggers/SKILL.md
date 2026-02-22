@@ -32,7 +32,12 @@ No schedule, no endpoint. Fired via the web-ui "Run" button or by request.
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `ephemeral` | New session per run | Cron jobs, one-off webhooks |
-| `persistent` | Resume across runs | Signal channels, email threads |
+| `persistent` | Resume by session key | Signal channels, email threads |
+
+Persistent triggers use a **session key** to track which session to resume:
+- `trigger.sh signal-chat '{"msg":"Hi"}' '+49170123456'` → resumes session for that contact
+- `trigger.sh email-handler '{"body":"..."}' 'thread-4821'` → resumes session for that thread
+- No key provided → defaults to `_default` (one session per trigger)
 
 ## MCP Tools
 

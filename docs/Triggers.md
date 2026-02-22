@@ -46,9 +46,27 @@ Each trigger has a configurable `session_mode`:
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `ephemeral` | New session per run, discarded after | Cron jobs, one-off webhooks |
-| `persistent` | Resume same session across runs | Signal channel, email thread, ongoing context |
+| `persistent` | Resume session based on session key | Signal channel, email thread, ongoing context |
 
-Persistent sessions store their `session_id` in the triggers table. The next run resumes where the last left off.
+### Session Key
+
+Persistent triggers use a **session key** to determine which session to resume. The key is passed as the 3rd argument to `trigger.sh`:
+
+```bash
+trigger.sh <trigger-name> [payload] [session-key]
+```
+
+The `(trigger_name, session_key)` pair maps to a session ID in the `trigger_sessions` table. This means one trigger can manage many independent sessions:
+
+| Trigger | Session Key | Effect |
+|---------|-------------|--------|
+| `email-handler` | `thread-4821` | Resumes the session for that email thread |
+| `email-handler` | `thread-9944` | Different session for a different thread |
+| `signal-chat` | `+49170123456` | Per-contact conversation session |
+| `deploy-hook` | `repo-myapp` | Per-repository deployment context |
+| `daily-standup` | *(none)* | `_default` key — one global session |
+
+If no session key is provided, it defaults to `_default` (one session per trigger).
 
 ## Trigger Types
 

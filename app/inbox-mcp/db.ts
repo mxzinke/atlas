@@ -20,11 +20,13 @@ function createTables(database: Database.Database): void {
       processed_at TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS signal_sessions (
+    CREATE TABLE IF NOT EXISTS trigger_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      sender TEXT UNIQUE NOT NULL,
+      trigger_name TEXT NOT NULL,
+      session_key TEXT NOT NULL,
       session_id TEXT NOT NULL,
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(trigger_name, session_key)
     );
   `);
 
@@ -40,7 +42,6 @@ function createTables(database: Database.Database): void {
       webhook_secret TEXT,
       prompt TEXT DEFAULT '',
       session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
-      session_id TEXT,
       enabled INTEGER DEFAULT 1,
       last_run TEXT,
       run_count INTEGER DEFAULT 0,
@@ -92,7 +93,6 @@ function migrateSchema(database: Database.Database): void {
         webhook_secret TEXT,
         prompt TEXT DEFAULT '',
         session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
-        session_id TEXT,
         enabled INTEGER DEFAULT 1,
         last_run TEXT,
         run_count INTEGER DEFAULT 0,
@@ -101,10 +101,43 @@ function migrateSchema(database: Database.Database): void {
     `);
   }
 
-  // Add session_mode and session_id columns if missing (upgrade from pre-session triggers)
+  // Add session_mode column if missing (upgrade from pre-session triggers)
   if (trigInfo && trigInfo.sql.includes("name TEXT") && !trigInfo.sql.includes("session_mode")) {
     database.exec(`ALTER TABLE triggers ADD COLUMN session_mode TEXT DEFAULT 'ephemeral'`);
-    database.exec(`ALTER TABLE triggers ADD COLUMN session_id TEXT`);
+  }
+
+  // Drop session_id from triggers if present (moved to trigger_sessions table)
+  if (trigInfo?.sql?.includes("session_id")) {
+    // SQLite doesn't support DROP COLUMN before 3.35.0, so recreate the table
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS _triggers_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL CHECK(type IN ('cron','webhook','manual')),
+        description TEXT DEFAULT '',
+        channel TEXT DEFAULT 'internal',
+        schedule TEXT,
+        webhook_secret TEXT,
+        prompt TEXT DEFAULT '',
+        session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
+        enabled INTEGER DEFAULT 1,
+        last_run TEXT,
+        run_count INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT OR IGNORE INTO _triggers_new (id, name, type, description, channel, schedule, webhook_secret, prompt, session_mode, enabled, last_run, run_count, created_at)
+        SELECT id, name, type, description, channel, schedule, webhook_secret, prompt, COALESCE(session_mode, 'ephemeral'), enabled, last_run, run_count, created_at FROM triggers;
+      DROP TABLE triggers;
+      ALTER TABLE _triggers_new RENAME TO triggers;
+    `);
+  }
+
+  // Migrate old signal_sessions to trigger_sessions (if signal_sessions exists)
+  const signalInfo = database.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='signal_sessions'"
+  ).get();
+  if (signalInfo) {
+    database.exec(`DROP TABLE signal_sessions`);
   }
 }
 

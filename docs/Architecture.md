@@ -133,12 +133,25 @@ Atlas uses a single SQLite database at `workspace/inbox/atlas.db` (WAL mode).
 | schedule | TEXT | Cron expression (for type=cron) |
 | webhook_secret | TEXT | Optional secret for webhook auth |
 | prompt | TEXT | Prompt template (`{{payload}}` for webhooks) |
-| session_mode | TEXT | `ephemeral` (new per run) or `persistent` (resume across runs) |
-| session_id | TEXT | Stored session ID for persistent triggers |
+| session_mode | TEXT | `ephemeral` (new per run) or `persistent` (resume by session key) |
 | enabled | INTEGER | 1=active, 0=disabled |
 | last_run | TEXT | Last execution timestamp |
 | run_count | INTEGER | Total execution count |
 | created_at | TEXT | ISO datetime |
+
+### trigger_sessions
+
+Maps `(trigger_name, session_key)` to a Claude session ID for persistent triggers.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Auto-increment primary key |
+| trigger_name | TEXT | References trigger name |
+| session_key | TEXT | Key that identifies the session (e.g. thread ID, sender, `_default`) |
+| session_id | TEXT | Claude session ID to resume |
+| updated_at | TEXT | ISO datetime |
+
+Unique constraint on `(trigger_name, session_key)`.
 
 ## Hook System
 

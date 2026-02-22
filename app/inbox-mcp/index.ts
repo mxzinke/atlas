@@ -340,6 +340,7 @@ server.tool(
     }
 
     db.prepare("DELETE FROM triggers WHERE name = ?").run(name);
+    db.prepare("DELETE FROM trigger_sessions WHERE trigger_name = ?").run(name);
 
     if (existing.type === "cron") syncCrontab();
 
