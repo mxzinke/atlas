@@ -44,9 +44,8 @@ deliver_signal() {
 deliver_email() {
   local reply_file="$1"
 
-  # Delegate to email-send.py which reads thread state for proper
-  # In-Reply-To and References headers
-  python3 /atlas/app/integrations/email-send.py "$reply_file" 2>&1 | tee -a "$LOG"
+  # Delegate to email add-on which handles threading headers via its own DB
+  python3 /atlas/app/integrations/email/email-addon.py deliver "$reply_file" 2>&1 | tee -a "$LOG"
 }
 
 process_replies() {

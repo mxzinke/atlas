@@ -30,12 +30,13 @@ Signal message ──▸ signal-receiver.sh
                       signal-cli send
 
 
-Email (IMAP) ──▸ email-poller.py
+Email (IMAP) ──▸ email-addon.py poll
                     │
-                    ├─▸ UPDATE email-threads/<thread_id>.json (thread state)
-                    ├─▸ INSERT INTO inbox (channel=email, reply_to=thread_id)
+                    ├─▸ UPDATE email.db threads + emails tables
+                    ├─▸ INSERT INTO atlas inbox (channel=email, reply_to=thread_id)
                     │
                     └─▸ trigger.sh email-handler <payload+inbox_msg_id> <thread_id>
+                         (non-blocking, parallel per thread)
                                           │
                                     Trigger session
                                     (persistent, per thread)
@@ -48,8 +49,7 @@ Email (IMAP) ──▸ email-poller.py
                       replies/N.json                  ▼
                               │               Main session
                    reply-delivery.sh
-                      ├─▸ email-send.py reads email-threads/<thread_id>.json
-                      └─▸ SMTP with In-Reply-To + References headers
+                      └─▸ email-addon.py deliver → SMTP with threading headers
 ```
 
 ## Signal
@@ -122,7 +122,9 @@ trigger_create:
 
 If `signal.whitelist` is set, only listed numbers can reach Atlas. Others are silently dropped. Empty list = accept all.
 
-## Email
+## Email Add-on
+
+The Email Communication Add-on (`app/integrations/email/email-addon.py`) is a unified module for all email operations. It has its own SQLite database per account for thread tracking and email history.
 
 ### Prerequisites
 
@@ -188,31 +190,59 @@ trigger_create:
 /atlas/app/integrations/reply-delivery.sh
 ```
 
-### Email Thread Tracking
+### CLI Usage
 
-Thread state is stored per-thread at `workspace/inbox/email-threads/<thread_id>.json`:
+The add-on provides a unified CLI for all email operations:
 
-```json
-{
-  "thread_id": "abc123_mail.com",
-  "subject": "Project Update",
-  "last_message_id": "<789@mail.com>",
-  "references": ["<abc@mail.com>", "<def@mail.com>", "<789@mail.com>"],
-  "last_sender": "alice@example.com",
-  "participants": ["alice@example.com", "bob@example.com"],
-  "updated_at": "2026-02-22T10:30:00"
-}
+```bash
+# Poll IMAP for new emails (fires triggers non-blocking)
+email-addon.py poll --once
+email-addon.py poll              # continuous mode
+
+# Send a new email
+email-addon.py send alice@example.com "Subject line" "Body text"
+
+# Reply to an existing thread (uses proper In-Reply-To + References headers)
+email-addon.py reply <thread_id> "Reply body"
+
+# List tracked threads
+email-addon.py threads
+email-addon.py threads --limit 50
+
+# Show thread detail (participants, message history)
+email-addon.py thread <thread_id>
 ```
 
-**Incoming**: `email-poller.py` updates the thread state on every new email — extracting `Message-ID`, building the `References` chain, tracking participants.
+### Email Database
 
-**Outgoing**: `email-send.py` reads the thread state to construct proper headers:
+Each configured account gets its own SQLite database at `workspace/inbox/email/<username>.db` with WAL mode for concurrent access:
+
+| Table | Purpose |
+|-------|---------|
+| `threads` | Thread state: subject, last_message_id, references_chain, participants, message_count |
+| `emails` | All emails (in + out): sender, recipient, subject, body, thread association |
+| `state` | Key-value state (e.g., `last_uid` for IMAP polling position) |
+
+Legacy JSON thread files (`email-threads/*.json`) and UID state are automatically migrated on first run.
+
+### Email Thread Tracking
+
+Thread state is tracked in the `threads` table:
+
+```
+thread_id        | subject        | last_message_id  | references_chain           | last_sender
+abc123_mail.com  | Project Update | <789@mail.com>   | ["<abc@>","<def@>","<789@>"] | alice@example.com
+```
+
+**Incoming**: `poll` updates the thread and stores each email in the `emails` table.
+
+**Outgoing**: `reply` reads the thread to construct proper headers:
 - `In-Reply-To`: the `last_message_id` (what we're replying to)
 - `References`: the accumulated chain (preserves thread in all mail clients)
 - `Subject`: `Re: <original subject>`
 - `To`: `last_sender` (the person who sent the most recent message)
 
-After sending, `email-send.py` appends its own `Message-ID` to the references chain so subsequent replies stay threaded.
+After sending, `reply` appends its own `Message-ID` to the references chain so subsequent replies stay threaded.
 
 **Thread ID derivation** from email headers:
 
@@ -223,6 +253,14 @@ After sending, `email-send.py` appends its own `Message-ID` to the references ch
 | Neither | Own `Message-ID` (new thread) |
 
 This means all emails in a thread share the same session key → same persistent trigger session → full conversational context.
+
+### Concurrency
+
+When multiple emails from different threads arrive in the same poll cycle:
+1. All emails are fetched and stored sequentially (fast — DB writes only)
+2. Triggers are fired **non-blocking** via `Popen` (no `subprocess.run` waiting)
+3. Each trigger runs in its own process with its own persistent session per thread
+4. SQLite WAL mode + `busy_timeout` prevents locking issues
 
 ### Whitelist
 
@@ -244,7 +282,7 @@ Both Signal and Email use the same delivery mechanism:
    ```
 3. `reply-delivery.sh` picks up the file and routes by channel:
    - `signal` → `signal-cli send -m <content> <reply_to>`
-   - `email` → `email-send.py` reads thread state, sends SMTP with proper headers
+   - `email` → `email-addon.py deliver` sends SMTP with proper threading headers
 4. Delivered files are moved to `replies/archive/`
 
 Start the delivery daemon:
@@ -288,4 +326,17 @@ echo "app-password" > /atlas/workspace/secrets/email-password
 # 4. Start services (add to crontab or supervisord):
 # /atlas/app/integrations/email-receiver.sh
 # /atlas/app/integrations/reply-delivery.sh
+```
+
+### Send an Email Directly
+
+```bash
+# Send a new email (SMTP must be configured):
+python3 /atlas/app/integrations/email/email-addon.py send recipient@example.com "Subject" "Body"
+
+# Reply to a thread:
+python3 /atlas/app/integrations/email/email-addon.py reply <thread_id> "Reply body"
+
+# List threads:
+python3 /atlas/app/integrations/email/email-addon.py threads
 ```

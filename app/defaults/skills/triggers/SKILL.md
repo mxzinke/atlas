@@ -111,7 +111,9 @@ Quick setup — 4 steps:
 
 Flow: signal-cli → receiver script → trigger.sh (per contact) → reply_send → reply-delivery → signal-cli send
 
-## Email Integration
+## Email Integration (Add-on)
+
+The Email Communication Add-on (`app/integrations/email/email-addon.py`) consolidates all email operations into a single module with its own per-account SQLite database.
 
 Quick setup — 4 steps:
 
@@ -135,9 +137,22 @@ Quick setup — 4 steps:
    ```
 4. **Start services**: `email-receiver.sh` + `reply-delivery.sh` (see `app/integrations/`)
 
-Flow: IMAP poll → email-poller.py → trigger.sh (per thread) → reply_send → reply-delivery → SMTP send
+Flow: IMAP poll → email-addon.py → trigger.sh (per thread, non-blocking) → reply_send → reply-delivery → email-addon.py deliver → SMTP
 
 Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one session.
+
+### Direct email sending
+
+```bash
+# Send a new email
+email-addon.py send recipient@example.com "Subject" "Body text"
+
+# Reply to an existing thread
+email-addon.py reply <thread_id> "Reply body"
+
+# List threads
+email-addon.py threads
+```
 
 ## Prompt Fallback
 

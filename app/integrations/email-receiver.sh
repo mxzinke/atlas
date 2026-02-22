@@ -1,5 +1,5 @@
 #!/bin/bash
-# Email receiver: polls IMAP for new messages and routes to trigger
+# Email receiver: delegates to the Email Add-on for IMAP polling
 # Runs via cron (e.g., every 2 minutes) or as continuous loop
 #
 # Prerequisites:
@@ -12,11 +12,6 @@
 #   default: continuous polling loop
 set -euo pipefail
 
-WORKSPACE=/atlas/workspace
-CONFIG="$WORKSPACE/config.yml"
 LOG="/atlas/logs/email.log"
-TRIGGER_NAME="email-handler"
-POLL_INTERVAL="${EMAIL_POLL_INTERVAL:-120}"
 
-# Pass to Python for the actual IMAP work
-python3 /atlas/app/integrations/email-poller.py "$@" 2>&1 | tee -a "$LOG"
+python3 /atlas/app/integrations/email/email-addon.py poll "$@" 2>&1 | tee -a "$LOG"
