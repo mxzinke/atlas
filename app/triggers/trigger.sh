@@ -25,6 +25,17 @@ if [ ! -f "$DB" ]; then
   exit 1
 fi
 
+# Safe template substitution using Python (no sed injection risk from payload content)
+safe_replace() {
+  python3 -c "
+import sys
+template = sys.stdin.read()
+for i in range(1, len(sys.argv), 2):
+    template = template.replace(sys.argv[i], sys.argv[i+1])
+print(template, end='')
+" "$@"
+}
+
 # Read trigger from DB
 ROW=$(sqlite3 -json "$DB" \
   "SELECT id, name, type, channel, prompt, session_mode, enabled FROM triggers WHERE name='${TRIGGER_NAME//\'/\'\'}' LIMIT 1" 2>/dev/null || echo "[]")
@@ -60,7 +71,7 @@ fi
 # Optional: second argument is payload (for webhook relay)
 PAYLOAD="${2:-}"
 if [ -n "$PAYLOAD" ]; then
-  PROMPT=$(echo "$PROMPT" | sed "s|{{payload}}|${PAYLOAD}|g")
+  PROMPT=$(echo -n "$PROMPT" | safe_replace "{{payload}}" "$PAYLOAD")
 fi
 
 # Update trigger stats
@@ -86,11 +97,11 @@ if [ "$SESSION_MODE" = "persistent" ]; then
       done
 
       if [ -n "$INJECT_TEMPLATE" ]; then
-        INJECT_MSG=$(sed -e "s|{{trigger_name}}|${TRIGGER_NAME}|g" \
-                         -e "s|{{channel}}|${CHANNEL}|g" \
-                         -e "s|{{sender}}|${SESSION_KEY}|g" \
-                         -e "s|{{payload}}|${PAYLOAD:-$PROMPT}|g" \
-                         "$INJECT_TEMPLATE")
+        INJECT_MSG=$(safe_replace "{{trigger_name}}" "$TRIGGER_NAME" \
+                                  "{{channel}}" "$CHANNEL" \
+                                  "{{sender}}" "$SESSION_KEY" \
+                                  "{{payload}}" "${PAYLOAD:-$PROMPT}" \
+                                  < "$INJECT_TEMPLATE")
       else
         INJECT_MSG="New message arrived:
 
@@ -129,7 +140,9 @@ done
 
 SYSTEM_PROMPT=""
 if [ -n "$PROMPT_TEMPLATE" ]; then
-  SYSTEM_PROMPT=$(cat "$PROMPT_TEMPLATE" | sed "s|{{trigger_name}}|${TRIGGER_NAME}|g" | sed "s|{{channel}}|${CHANNEL}|g")
+  SYSTEM_PROMPT=$(safe_replace "{{trigger_name}}" "$TRIGGER_NAME" \
+                               "{{channel}}" "$CHANNEL" \
+                               < "$PROMPT_TEMPLATE")
 fi
 
 # Build Claude command
@@ -166,8 +179,8 @@ if [ "$SESSION_MODE" = "persistent" ]; then
 
   if [ -n "$NEW_SESSION_ID" ]; then
     sqlite3 "$DB" "INSERT INTO trigger_sessions (trigger_name, session_key, session_id) \
-      VALUES ('${TRIGGER_NAME//\'/\'\'}', '${SESSION_KEY//\'/\'\'}', '${NEW_SESSION_ID}') \
-      ON CONFLICT(trigger_name, session_key) DO UPDATE SET session_id='${NEW_SESSION_ID}', updated_at=datetime('now');"
+      VALUES ('${TRIGGER_NAME//\'/\'\'}', '${SESSION_KEY//\'/\'\'}', '${NEW_SESSION_ID//\'/\'\'}') \
+      ON CONFLICT(trigger_name, session_key) DO UPDATE SET session_id='${NEW_SESSION_ID//\'/\'\'}', updated_at=datetime('now');"
     echo "[$(date)] Saved session for key=$SESSION_KEY: $NEW_SESSION_ID" | tee -a "$LOG"
   fi
 fi

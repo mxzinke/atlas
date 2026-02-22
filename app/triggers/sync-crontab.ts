@@ -36,7 +36,9 @@ try {
     "SELECT name, schedule FROM triggers WHERE type = 'cron' AND enabled = 1 AND schedule IS NOT NULL"
   ).all() as { name: string; schedule: string }[];
 
-  cronLines = triggers.map(t => `${t.schedule}  /atlas/app/triggers/trigger.sh ${t.name}`);
+  cronLines = triggers
+    .filter(t => /^[a-z0-9_-]+$/.test(t.name) && /^[\d\s*\/,-]+$/.test(t.schedule))
+    .map(t => `${t.schedule}  /atlas/app/triggers/trigger.sh ${t.name}`);
   db.close();
 } catch (err) {
   console.error("Warning: could not read triggers from DB:", err);

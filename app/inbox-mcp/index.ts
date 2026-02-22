@@ -165,9 +165,21 @@ server.tool(
   async ({ name, type, description, channel, schedule, webhook_secret, prompt, session_mode }) => {
     const db = getDb();
 
+    if (!/^[a-z0-9_-]+$/.test(name)) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Trigger name must be lowercase alphanumeric, dashes, underscores only" }) }],
+      };
+    }
+
     if (type === "cron" && !schedule) {
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ error: "Cron triggers require a schedule" }) }],
+      };
+    }
+
+    if (schedule && !/^[\d\s*\/,-]+$/.test(schedule)) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Invalid cron schedule format" }) }],
       };
     }
 

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, closeSync, openSync, statSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { getDb } from "../inbox-mcp/db";
 
 // --- Config ---
@@ -353,7 +353,8 @@ app.post("/triggers", async (c) => {
   const webhook_secret = (body.webhook_secret as string || "").trim() || null;
   const prompt = (body.prompt as string || "").trim();
 
-  if (!name) return c.redirect("/triggers/new?err=name");
+  if (!name || !/^[a-z0-9_-]+$/.test(name)) return c.redirect("/triggers/new?err=name");
+  if (schedule && !/^[\d\s*\/,-]+$/.test(schedule)) return c.redirect("/triggers/new?err=schedule");
 
   try {
     db.prepare(
@@ -617,7 +618,9 @@ app.get("/memory/search", (c) => {
 app.get("/memory/view", (c) => {
   const file = c.req.query("file") || "";
   if (!file) return c.html("");
-  const content = readFile(join(MEMORY, file));
+  const resolved = resolve(join(MEMORY, file));
+  if (!resolved.startsWith(MEMORY + "/")) return c.html('<div class="text-muted">Invalid path.</div>');
+  const content = readFile(resolved);
   return c.html(`<div class="card"><h3>${safe(file)}</h3><pre>${safe(content) || '<span class="text-muted">Empty file.</span>'}</pre></div>`);
 });
 
