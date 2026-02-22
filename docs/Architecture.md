@@ -15,7 +15,7 @@ Atlas is a single-container system that turns Claude Code into a persistent, eve
 │                      ▼               ▼               ▼                 │
 │               ┌──────────────────────────────────────────┐            │
 │               │          atlas.db (SQLite)                │            │
-│               │  messages │ triggers │ signal_sessions    │            │
+│               │  messages │ triggers │ trigger_sessions    │            │
 │               └──────────────────────────────────────────┘            │
 │                                      │                                 │
 │                               touch .wake                              │
@@ -236,17 +236,18 @@ read-only workspace access and MCP tools.
 
 ```
 Event arrives (cron schedule / webhook POST / manual run)
-  → trigger.sh <name>
-  → Read trigger config from DB (prompt, session_mode, session_id)
+  → trigger.sh <name> [payload] [session-key]
+  → Read trigger config from DB (prompt, session_mode)
   → Spawn trigger Claude session:
-    - ephemeral: new session every run
-    - persistent: resume stored session_id
+    - ephemeral: always a new session
+    - persistent: lookup trigger_sessions by (name, session_key) → resume or new
   → SessionStart hook detects ATLAS_TRIGGER → loads minimal context
   → Trigger session processes the event:
     Option A: Handles directly (reply_send, MCP actions) → done
     Option B: Escalates to main via inbox_write (1..N tasks)
   → inbox_write touches .wake → watcher resumes main session
-  → Stop hook detects ATLAS_TRIGGER → saves session_id if persistent → exit
+  → Stop hook detects ATLAS_TRIGGER → exit 0 (no inbox loop)
+  → trigger.sh saves session ID to trigger_sessions (if persistent)
 ```
 
 ### Escalation Flow

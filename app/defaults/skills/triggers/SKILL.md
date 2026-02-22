@@ -1,6 +1,6 @@
 ---
 name: triggers
-description: How to create and manage cron, webhook, and manual triggers. Use when setting up scheduled tasks or webhook integrations.
+description: How to create and manage cron, webhook, and manual triggers. Also covers Signal and Email integration setup.
 ---
 
 # Triggers
@@ -32,12 +32,19 @@ No schedule, no endpoint. Fired via the web-ui "Run" button or by request.
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `ephemeral` | New session per run | Cron jobs, one-off webhooks |
-| `persistent` | Resume by session key | Signal channels, email threads |
+| `persistent` | Resume by session key | Signal contacts, email threads |
 
-Persistent triggers use a **session key** to track which session to resume:
-- `trigger.sh signal-chat '{"msg":"Hi"}' '+49170123456'` → resumes session for that contact
-- `trigger.sh email-handler '{"body":"..."}' 'thread-4821'` → resumes session for that thread
-- No key provided → defaults to `_default` (one session per trigger)
+Persistent triggers use a **session key** to track which session to resume.
+The key is the 3rd argument to `trigger.sh`:
+
+```
+trigger.sh <trigger-name> [payload] [session-key]
+```
+
+Examples:
+- `trigger.sh signal-chat '{"msg":"Hi"}' '+49170123456'` → session per contact
+- `trigger.sh email-handler '{"body":"..."}' 'thread-4821'` → session per thread
+- No key → `_default` (one session per trigger)
 
 ## MCP Tools
 
@@ -52,12 +59,12 @@ Persistent triggers use a **session key** to track which session to resume:
 
 ```
 trigger_create:
-  name: "github-issues"         # unique slug
-  type: "cron"                  # cron, webhook, or manual
-  schedule: "0 * * * *"         # required for cron
-  session_mode: "ephemeral"     # ephemeral or persistent
+  name: "github-issues"
+  type: "cron"
+  schedule: "0 * * * *"
+  session_mode: "ephemeral"
   description: "Hourly GitHub issue check"
-  channel: "internal"           # inbox channel for the message
+  channel: "internal"
   prompt: "Check GitHub repos for new issues. Escalate critical ones to main session."
 ```
 
@@ -80,18 +87,69 @@ inbox_write(channel="task", sender="trigger:deploy", content="Update CHANGELOG f
 inbox_write(channel="task", sender="trigger:deploy", content="Run post-deploy smoke tests")
 ```
 
+## Signal Integration
+
+Quick setup — 4 steps:
+
+1. **Install**: Add `apt-get install -y signal-cli` to `workspace/user-extensions.sh`
+2. **Configure** `workspace/config.yml`:
+   ```yaml
+   signal:
+     number: "+491701234567"
+     whitelist: ["+491709876543"]  # empty = accept all
+   ```
+3. **Create trigger**:
+   ```
+   trigger_create:
+     name: "signal-chat"
+     type: "webhook"
+     session_mode: "persistent"
+     channel: "signal"
+     prompt: "New Signal message:\n\n{{payload}}\n\nRespond conversationally. Escalate complex tasks via inbox_write."
+   ```
+4. **Start services**: `signal-receiver.sh` + `reply-delivery.sh` (see `app/integrations/`)
+
+Flow: signal-cli → receiver script → trigger.sh (per contact) → reply_send → reply-delivery → signal-cli send
+
+## Email Integration
+
+Quick setup — 4 steps:
+
+1. **Configure** `workspace/config.yml`:
+   ```yaml
+   email:
+     imap_host: "imap.gmail.com"
+     smtp_host: "smtp.gmail.com"
+     username: "atlas@example.com"
+     password_file: "/atlas/workspace/secrets/email-password"
+   ```
+2. **Store password**: `echo "app-password" > /atlas/workspace/secrets/email-password`
+3. **Create trigger**:
+   ```
+   trigger_create:
+     name: "email-handler"
+     type: "webhook"
+     session_mode: "persistent"
+     channel: "email"
+     prompt: "New email:\n\n{{payload}}\n\nRespond professionally. Escalate complex tasks via inbox_write."
+   ```
+4. **Start services**: `email-receiver.sh` + `reply-delivery.sh` (see `app/integrations/`)
+
+Flow: IMAP poll → email-poller.py → trigger.sh (per thread) → reply_send → reply-delivery → SMTP send
+
+Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one session.
+
 ## Prompt Fallback
 
 If a trigger's `prompt` field is empty, the system looks for:
 ```
 workspace/triggers/cron/<trigger-name>/event-prompt.md
 ```
-Use this for long or complex prompts that don't fit in a database field.
 
 ## Crontab Sync
 
-Cron triggers are automatically synced to `workspace/crontab`. The crontab has two sections:
-- **Static** (above `# AUTO-GENERATED`): manual entries, don't touch
+Cron triggers are automatically synced to `workspace/crontab`:
+- **Static** (above `# AUTO-GENERATED`): manual entries
 - **Dynamic** (below): auto-generated from enabled cron triggers
 
 No manual crontab editing needed — just use the MCP tools.

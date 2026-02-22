@@ -12,9 +12,25 @@ memory:
   load_memory_md: true
   load_journal_days: 2
 
+# Signal integration (requires signal-cli)
+# Install: apt-get install -y signal-cli  (in user-extensions.sh)
+# Register: signal-cli -a +YOUR_NUMBER register && signal-cli -a +YOUR_NUMBER verify CODE
 signal:
+  number: ""                   # Your Signal phone number (e.g. "+491701234567")
   history_turns: 20
-  whitelist: []
+  whitelist: []                # Empty = accept all, or list of allowed numbers
+
+# Email integration (IMAP + SMTP)
+email:
+  imap_host: ""                # e.g. "imap.gmail.com"
+  imap_port: 993
+  smtp_host: ""                # e.g. "smtp.gmail.com"
+  smtp_port: 587
+  username: ""                 # e.g. "atlas@example.com"
+  password_file: "/atlas/workspace/secrets/email-password"
+  folder: "INBOX"
+  whitelist: []                # Empty = accept all, or list of senders/domains
+  mark_read: true              # Mark fetched emails as read on server
 
 daily_cleanup:
   enabled: true
