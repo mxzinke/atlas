@@ -7,49 +7,46 @@ set -euo pipefail
 TODAY=$(date +%Y-%m-%d)
 PROMPT_DIR="/atlas/app/prompts"
 
+# Helper: resolve channel-specific template with fallback
+resolve_template() {
+  local suffix="$1"
+  for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-${suffix}.md" "$PROMPT_DIR/trigger-session-${suffix}.md"; do
+    if [ -f "$candidate" ]; then
+      echo "$candidate"
+      return
+    fi
+  done
+}
+
 # --- Trigger session: channel-specific compaction ---
 if [ -n "${ATLAS_TRIGGER:-}" ]; then
   CHANNEL="${ATLAS_TRIGGER_CHANNEL:-internal}"
   TRIGGER_NAME="$ATLAS_TRIGGER"
 
-  echo "=== MANUAL COMPACTION REQUESTED ==="
-  echo ""
-  echo "Be thorough — detailed context will be lost after compaction."
-  echo ""
-
-  # Phase 1: Pre-compaction — save state to memory
-  PRE_COMPACT=""
-  for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-pre-compact.md" "$PROMPT_DIR/trigger-session-pre-compact.md"; do
-    if [ -f "$candidate" ]; then
-      PRE_COMPACT="$candidate"
-      break
-    fi
-  done
-
+  # Phase 1: Pre-compaction — save state to memory (be thorough)
+  PRE_COMPACT=$(resolve_template "pre-compact")
   if [ -n "$PRE_COMPACT" ]; then
+    echo "<system-notice>"
+    echo "Manual compaction requested. Be thorough — detailed context will be lost."
+    echo ""
     sed -e "s|{{trigger_name}}|${TRIGGER_NAME}|g" \
         -e "s|{{channel}}|${CHANNEL}|g" \
         -e "s|{{today}}|${TODAY}|g" \
         "$PRE_COMPACT"
+    echo "(Journal file: memory/${TODAY}.md)"
+    echo "</system-notice>"
   fi
 
   echo ""
-  echo "(Journal file: memory/${TODAY}.md)"
-  echo ""
 
-  # Phase 2: Post-compaction context
-  COMPACT=""
-  for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-compact.md" "$PROMPT_DIR/trigger-session-compact.md"; do
-    if [ -f "$candidate" ]; then
-      COMPACT="$candidate"
-      break
-    fi
-  done
-
+  # Phase 2: Post-compaction context — should survive compaction
+  COMPACT=$(resolve_template "compact")
   if [ -n "$COMPACT" ]; then
+    echo "<system-reminder>"
     sed -e "s|{{trigger_name}}|${TRIGGER_NAME}|g" \
         -e "s|{{channel}}|${CHANNEL}|g" \
         "$COMPACT"
+    echo "</system-reminder>"
   fi
 
   exit 0
@@ -57,19 +54,14 @@ fi
 
 # --- Main session: generic memory flush ---
 
-cat << 'EOF'
-=== MANUAL COMPACTION REQUESTED ===
-
-The user has manually triggered a context compaction.
-
-Consolidate ALL important findings from this session:
+echo "<system-notice>"
+cat << EOF
+Manual compaction requested. Consolidate ALL important findings:
 
 1. Write lasting facts, decisions, and preferences to memory/MEMORY.md
-2. Write task results and context to memory/JOURNAL_DATE.md
+2. Write task results and context to memory/${TODAY}.md
 3. If a project topic is relevant, create/update memory/projects/
 
-Be thorough - detailed context will be lost after compaction.
+Be thorough — detailed context will be lost after compaction.
 EOF
-
-echo ""
-echo "(Journal file: memory/${TODAY}.md)"
+echo "</system-notice>"

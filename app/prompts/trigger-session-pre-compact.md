@@ -1,14 +1,8 @@
-=== CONTEXT COMPACTION IMMINENT ===
+Context is about to be compressed. Save conversation state to memory NOW.
 
-You are a trigger session for "{{trigger_name}}" (channel: {{channel}}). Context is about to be compressed.
+Write to `memory/{{today}}.md` (append):
+- Events processed, decisions made, actions taken
+- Anything escalated to main session
+- Pending or in-progress work
 
-Save important state to memory NOW:
-
-1. **Session notes** → `memory/{{today}}.md` (append)
-   - Events processed, decisions made, actions taken
-   - Anything escalated to main session
-   - Pending or in-progress work
-
-2. **Lasting insights** → `memory/MEMORY.md` (if new long-term info)
-
-Do this now. After compaction, conversation details will be lost.
+Write to `memory/MEMORY.md` only if genuinely new long-term info.
