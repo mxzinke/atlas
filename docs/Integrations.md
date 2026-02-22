@@ -8,13 +8,12 @@ Atlas supports Signal and Email as communication channels. Each integration writ
 External Channel          Atlas
 ═══════════════           ═════
 
-Signal message ──▸ signal-addon.py receive
+Signal message ──▸ signal-addon.py incoming <sender> <message>
                     │
-                    ├─▸ UPDATE signal.db contacts + messages tables
+                    ├─▸ UPDATE signal.db contacts + messages
                     ├─▸ INSERT INTO atlas inbox (channel=signal, reply_to=sender)
                     │
                     └─▸ trigger.sh signal-chat <payload+inbox_msg_id> <sender>
-                         (non-blocking, parallel per contact)
                                           │
                                     Trigger session
                                     (persistent, per sender)
@@ -114,12 +113,11 @@ trigger_create:
 ### CLI Usage
 
 ```bash
-# Receive messages (fires triggers non-blocking)
-signal-addon.py receive --once
-signal-addon.py receive              # continuous mode
+# Inject an incoming message (stores + fires trigger)
+signal-addon.py incoming +491701234567 "Hello!" --name "Alice"
 
 # Send a message directly
-signal-addon.py send +491701234567 "Hello!"
+signal-addon.py send +491701234567 "Hi!"
 
 # List known contacts
 signal-addon.py contacts
@@ -139,11 +137,10 @@ Each configured number gets its own SQLite database at `workspace/inbox/signal/<
 
 ### How It Works
 
-1. `signal-addon.py receive` polls `signal-cli receive --json`
-2. Each message is stored in signal.db and written to atlas inbox (channel=signal, reply_to=sender)
-3. Triggers fire **non-blocking** per contact via `Popen`
-4. If a trigger session is already running for that contact, the lock in `trigger.sh` prevents a duplicate — the running session picks up the new message via the stop hook
-5. `reply_send` → `replies/N.json` → `reply-delivery.sh` → `signal-addon.py deliver` → `signal-cli send`
+1. `signal-addon.py incoming` stores the message in signal.db and writes to atlas inbox
+2. Fires `trigger.sh signal-chat` with the sender as session key
+3. If a trigger session is already running for that contact, the stop hook picks up the new message in the next loop
+4. `reply_send` → `replies/N.json` → `reply-delivery.sh` → `signal-addon.py deliver` → `signal-cli send`
 
 ### Whitelist
 
@@ -293,26 +290,15 @@ When multiple emails from different threads arrive in the same poll cycle:
 
 `email.whitelist` accepts full addresses (`alice@example.com`) or domains (`example.org`). Empty = accept all.
 
-## Message Queuing (Concurrent Messages)
+## Next-Loop Message Injection
 
-When a message arrives while a trigger session is already running for the same contact/thread:
+When a message arrives while a trigger session is already running for the same contact/thread, the stop hook injects it in the next response loop:
 
 1. The message is written to the atlas inbox (always happens first)
-2. `trigger.sh` attempts to acquire a session lock (`mkdir` — atomic)
-3. **Lock acquired**: new session spawns, processes the message
-4. **Lock busy**: skip — the message is already in the inbox
-
-The running session picks up queued messages automatically:
-
-```
-Message 1 arrives → trigger.sh acquires lock → session starts processing
-Message 2 arrives → trigger.sh sees lock → skips (message in inbox)
-Message 3 arrives → trigger.sh sees lock → skips (message in inbox)
-Session finishes Message 1 → stop hook queries inbox for pending messages
-  → finds Message 2 → exit 2 (continue) → processes Message 2
-  → stop hook → finds Message 3 → exit 2 → processes Message 3
-  → stop hook → no more pending → exit 0 → lock released
-```
+2. The running session finishes its current response
+3. Stop hook queries inbox: `WHERE channel=<trigger_channel> AND reply_to=<session_key> AND status='pending'`
+4. If found → outputs message, `exit 2` (continue processing)
+5. Session processes the new message immediately — no restart, no new session
 
 This works identically for Signal (per contact), Email (per thread), and any future integration. The key is that `reply_to` in the inbox matches the trigger's session key (`ATLAS_TRIGGER_SESSION_KEY`).
 
@@ -361,17 +347,18 @@ echo 'apt-get install -y signal-cli' >> /atlas/workspace/user-extensions.sh
 # /atlas/app/integrations/reply-delivery.sh
 ```
 
-### Send a Signal Message Directly
+### Signal Direct Usage
 
 ```bash
-# Send a message (signal-cli must be installed + configured):
-python3 /atlas/app/integrations/signal/signal-addon.py send +491701234567 "Hello!"
+# Inject a message (as if received from Signal):
+python3 /atlas/app/integrations/signal/signal-addon.py incoming +49170123 "Hello!"
 
-# List contacts:
+# Send a message:
+python3 /atlas/app/integrations/signal/signal-addon.py send +49170123 "Hi!"
+
+# Contacts / history:
 python3 /atlas/app/integrations/signal/signal-addon.py contacts
-
-# Conversation history:
-python3 /atlas/app/integrations/signal/signal-addon.py history +491701234567
+python3 /atlas/app/integrations/signal/signal-addon.py history +49170123
 ```
 
 ### Enable Email in 4 Steps

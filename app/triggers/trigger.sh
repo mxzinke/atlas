@@ -68,25 +68,6 @@ fi
 # Update trigger stats
 sqlite3 "$DB" "UPDATE triggers SET last_run = datetime('now'), run_count = run_count + 1 WHERE name = '${TRIGGER_NAME//\'/\'\'}';"
 
-# --- Session lock: prevent concurrent sessions for the same (trigger, key) ---
-# If a session is already running, skip — the message is already in the inbox
-# and the running session will pick it up via the stop hook.
-LOCK_HASH=$(echo "${TRIGGER_NAME}:${SESSION_KEY}" | md5sum | cut -d' ' -f1)
-LOCK_DIR="/atlas/workspace/inbox/.trigger-lock-${LOCK_HASH}"
-
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  echo "[$(date)] Session already running for $TRIGGER_NAME (key=$SESSION_KEY) — message queued in inbox" | tee -a "$LOG"
-  exit 0
-fi
-# Store PID for stale lock detection
-echo "$$" > "$LOCK_DIR/pid"
-
-# Ensure lock is always released
-cleanup_lock() {
-  rm -rf "$LOCK_DIR" 2>/dev/null
-}
-trap cleanup_lock EXIT
-
 echo "[$(date)] Trigger firing: $TRIGGER_NAME (mode=$SESSION_MODE, key=$SESSION_KEY, channel=$CHANNEL)" | tee -a "$LOG"
 
 # Build Claude command

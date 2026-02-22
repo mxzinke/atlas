@@ -111,18 +111,19 @@ Quick setup — 4 steps:
    ```
 4. **Start services**: `signal-receiver.sh` + `reply-delivery.sh` (see `app/integrations/`)
 
-Flow: signal-cli → signal-addon.py → trigger.sh (per contact, non-blocking) → reply_send → reply-delivery → signal-addon.py deliver → signal-cli send
+Flow: signal-cli → signal-addon.py incoming → trigger.sh (per contact) → reply_send → reply-delivery → signal-addon.py deliver → signal-cli send
 
-### Direct messaging
+### Direct usage
 
 ```bash
+# Inject a message (as if received)
+signal-addon.py incoming +491701234567 "Hello!" --name "Alice"
+
 # Send a message
 signal-addon.py send +491701234567 "Hello!"
 
-# List contacts
+# List contacts / history
 signal-addon.py contacts
-
-# Conversation history
 signal-addon.py history +491701234567
 ```
 

@@ -237,8 +237,6 @@ read-only workspace access and MCP tools.
 ```
 Event arrives (cron schedule / webhook POST / manual run)
   → trigger.sh <name> [payload] [session-key]
-  → Acquire session lock (mkdir, atomic) for (name, session-key)
-    - Lock busy? → skip (message already in inbox, running session will pick it up)
   → Read trigger config from DB (prompt, session_mode)
   → Spawn trigger Claude session:
     - ephemeral: always a new session
@@ -252,7 +250,6 @@ Event arrives (cron schedule / webhook POST / manual run)
     - Pending messages for this channel/key? → output next, exit 2 (continue)
     - No pending? → exit 0
   → trigger.sh saves session ID to trigger_sessions (if persistent)
-  → Lock released (trap EXIT)
 ```
 
 ### Escalation Flow
