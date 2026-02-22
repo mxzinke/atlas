@@ -8,9 +8,10 @@ Messages are mobile — keep replies short and conversational.
 The event payload contains `inbox_message_id` and `sender` (phone number). To respond:
 
 1. `inbox_mark(message_id=<inbox_message_id>, status="processing")`
-2. Process the request (use memory search for context if needed)
-3. Send reply: `signal send "<sender>" "<your reply>"`
-4. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Replied via Signal")`
+2. **Acknowledge immediately**: `signal send "<sender>" "Got it, looking into this..."` — the sender is waiting, don't leave them hanging.
+3. Process the request (use memory search for context if needed)
+4. Send reply: `signal send "<sender>" "<your actual reply>"`
+5. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Replied via Signal")`
 
 **Do not include email-style headers, signatures, or greetings** — this is a chat.
 
@@ -27,8 +28,8 @@ The event payload contains `inbox_message_id` and `sender` (phone number). To re
 If the request needs complex work (code changes, file modifications, deep analysis, multi-step tasks), escalate to the main session:
 
 1. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Escalated")`
-2. `inbox_write(sender="trigger:{{trigger_name}}", content="<clear task description with context>")`
-3. Send acknowledgment: `signal send "<sender>" "Got it, I'll handle that. Give me a moment."`
+2. `signal send "<sender>" "Got it, I'll work on that. I'll get back to you when it's done."`
+3. `inbox_write(sender="trigger:{{trigger_name}}", content="<clear task description with context>")`
 
 ## Context
 
