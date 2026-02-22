@@ -23,7 +23,8 @@ RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/atlas/app/bin:/atlas/workspace/bin:/root/.bun/bin:${PATH}"
 
 # Install supercronic (cron replacement)
-RUN SUPERCRONIC_URL="https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64" && \
+RUN ARCH=$(dpkg --print-architecture) && \
+    SUPERCRONIC_URL="https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-${ARCH}" && \
     curl -fsSL "$SUPERCRONIC_URL" -o /usr/local/bin/supercronic && \
     chmod +x /usr/local/bin/supercronic
 
