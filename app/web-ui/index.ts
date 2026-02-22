@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, closeSync, openSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, closeSync, openSync, statSync } from "fs";
 import { join } from "path";
 import { getDb } from "../inbox-mcp/db";
 
@@ -121,9 +121,12 @@ const app = new Hono();
 // ============ DASHBOARD ============
 app.get("/", (c) => {
   const sessionRunning = existsSync(LOCK);
-  const pending = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE status='pending'").get() as any)?.c || 0;
-  const total = (db.prepare("SELECT COUNT(*) as c FROM messages").get() as any)?.c || 0;
-  const done = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE status='done'").get() as any)?.c || 0;
+  const statusCounts = db.prepare("SELECT status, COUNT(*) as c FROM messages GROUP BY status").all() as any[];
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const row of statusCounts) { counts[row.status] = row.c; total += row.c; }
+  const pending = counts["pending"] || 0;
+  const done = counts["done"] || 0;
 
   // Recent journal files (YYYY-MM-DD.md directly in memory/)
   let journals: string[] = [];
@@ -174,16 +177,30 @@ app.get("/", (c) => {
 // ============ INBOX ============
 app.get("/inbox", (c) => {
   const status = c.req.query("status") || "";
+  const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
+  const limit = 100;
+  const offset = (page - 1) * limit;
+
+  let countSql = "SELECT COUNT(*) as c FROM messages";
   let sql = "SELECT * FROM messages";
   const params: any[] = [];
-  if (status) { sql += " WHERE status = ?"; params.push(status); }
-  sql += " ORDER BY created_at DESC";
-  const msgs = db.prepare(sql).all(...params) as any[];
+  if (status) { countSql += " WHERE status = ?"; sql += " WHERE status = ?"; params.push(status); }
+  sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+
+  const total = (db.prepare(countSql).get(...params) as any)?.c || 0;
+  const msgs = db.prepare(sql).all(...params, limit, offset) as any[];
+  const totalPages = Math.ceil(total / limit);
 
   const filters = ["", "pending", "processing", "done"];
   const filterHtml = filters.map(f =>
     `<a href="/inbox${f ? '?status='+f : ''}" class="btn btn-sm ${status === f ? '' : 'btn-outline'}" style="margin-right:4px">${f || "All"}</a>`
   ).join("");
+
+  const qs = status ? `&status=${status}` : "";
+  const paginationHtml = totalPages > 1 ? `<div class="flex mt-8" style="justify-content:space-between">
+    <span class="text-muted">Page ${page} of ${totalPages} (${total} messages)</span>
+    <span>${page > 1 ? `<a href="/inbox?page=${page - 1}${qs}" class="btn btn-sm btn-outline">Prev</a> ` : ""}${page < totalPages ? `<a href="/inbox?page=${page + 1}${qs}" class="btn btn-sm btn-outline">Next</a>` : ""}</span>
+  </div>` : "";
 
   const html = `
     <h1>Inbox</h1>
@@ -201,7 +218,8 @@ app.get("/inbox", (c) => {
         <tr id="detail-${m.id}"></tr>
       `).join("")}
     </table>
-    ${msgs.length === 0 ? '<div class="card text-muted">No messages found.</div>' : ''}`;
+    ${msgs.length === 0 ? '<div class="card text-muted">No messages found.</div>' : ''}
+    ${paginationHtml}`;
 
   return c.html(layout("Inbox", html, "inbox"));
 });
@@ -563,18 +581,24 @@ app.get("/memory/search", (c) => {
   const q = c.req.query("q") || "";
   if (!q) return c.html('<div class="text-muted">Enter a search term.</div>');
 
+  const MAX_RESULTS = 20;
+  const MAX_FILE_SIZE = 100 * 1024; // 100KB
   const results: { file: string; lines: string[] }[] = [];
   if (existsSync(MEMORY)) {
+    const qLower = q.toLowerCase();
     const walk = (dir: string, prefix = ""): void => {
+      if (results.length >= MAX_RESULTS) return;
       try {
         for (const f of readdirSync(dir, { withFileTypes: true })) {
+          if (results.length >= MAX_RESULTS) return;
           const rel = prefix ? `${prefix}/${f.name}` : f.name;
-          if (f.isDirectory()) walk(join(dir, f.name), rel);
-          else if (f.name.endsWith(".md")) {
-            const content = readFile(join(dir, f.name));
-            const matching = content.split("\n").filter(l => l.toLowerCase().includes(q.toLowerCase()));
-            if (matching.length > 0) results.push({ file: rel, lines: matching.slice(0, 3) });
-          }
+          if (f.isDirectory()) { walk(join(dir, f.name), rel); continue; }
+          if (!f.name.endsWith(".md")) continue;
+          const fullPath = join(dir, f.name);
+          try { if (statSync(fullPath).size > MAX_FILE_SIZE) continue; } catch { continue; }
+          const content = readFile(fullPath);
+          const matching = content.split("\n").filter(l => l.toLowerCase().includes(qLower));
+          if (matching.length > 0) results.push({ file: rel, lines: matching.slice(0, 3) });
         }
       } catch {}
     };
@@ -582,7 +606,8 @@ app.get("/memory/search", (c) => {
   }
 
   if (results.length === 0) return c.html(`<div class="text-muted">No results for "${safe(q)}".</div>`);
-  return c.html(results.map(r => `
+  const capped = results.length >= MAX_RESULTS ? `<div class="text-muted mb-8">Showing first ${MAX_RESULTS} results. Use QMD search for comprehensive results.</div>` : "";
+  return c.html(capped + results.map(r => `
     <div class="card" style="padding:10px;margin-bottom:8px">
       <strong style="color:#7c6ef0">${safe(r.file)}</strong>
       <pre style="margin-top:4px;padding:8px;font-size:12px">${r.lines.map(l => safe(l)).join("\n")}</pre>
