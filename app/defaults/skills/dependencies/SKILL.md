@@ -55,5 +55,6 @@ apt-get update && apt-get install -y <package>
 ## Important
 
 - Always add persistent installs to `user-extensions.sh`, not just install them at runtime
+- Configuration files outside the persisted volumes (`/atlas/workspace/` and `/root/`) are lost on restart — e.g. changes to `/etc/`, `/opt/`, or other system paths. If you need persistent config changes, add the corresponding commands to `user-extensions.sh`
 - The container has no Docker daemon — you cannot run `docker` commands
 - Pre-installed: Bun, Node.js, Python, git, sqlite3, curl, jq
