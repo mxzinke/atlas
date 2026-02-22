@@ -31,6 +31,9 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
@@ -42,6 +45,7 @@ EMAIL_DB_DIR = "/atlas/workspace/inbox/email"
 WAKE_PATH = "/atlas/workspace/inbox/.wake"
 TRIGGER_SCRIPT = "/atlas/app/triggers/trigger.sh"
 TRIGGER_NAME = "email-handler"
+ATTACHMENTS_DIR = "/atlas/workspace/inbox/email/attachments"
 STATE_FILE_LEGACY = "/atlas/workspace/inbox/.email-last-uid"
 THREADS_DIR_LEGACY = "/atlas/workspace/inbox/email-threads"
 
@@ -285,6 +289,57 @@ def get_body(msg):
     return ""
 
 
+def extract_attachments(msg, thread_id):
+    """Extract and save attachments from an email. Returns list of attachment metadata."""
+    if not msg.is_multipart():
+        return []
+
+    attachments = []
+    save_dir = os.path.join(ATTACHMENTS_DIR, thread_id)
+
+    for part in msg.walk():
+        content_disposition = part.get("Content-Disposition", "")
+        if "attachment" not in content_disposition and "inline" not in content_disposition:
+            continue
+        # Skip text parts that are the email body
+        if part.get_content_type() in ("text/plain", "text/html") and "attachment" not in content_disposition:
+            continue
+
+        filename = part.get_filename()
+        if not filename:
+            ext = part.get_content_type().split("/")[-1]
+            filename = f"attachment-{len(attachments) + 1}.{ext}"
+
+        # Sanitize filename
+        filename = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)[:128]
+
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+
+        os.makedirs(save_dir, exist_ok=True)
+        filepath = os.path.join(save_dir, filename)
+
+        # Avoid overwriting existing files
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while os.path.exists(filepath):
+            filepath = os.path.join(save_dir, f"{base}-{counter}{ext}")
+            counter += 1
+
+        with open(filepath, "wb") as f:
+            f.write(payload)
+
+        attachments.append({
+            "filename": filename,
+            "content_type": part.get_content_type(),
+            "size": len(payload),
+            "path": filepath,
+        })
+
+    return attachments
+
+
 def is_whitelisted(sender, whitelist):
     if not whitelist:
         return True
@@ -375,6 +430,9 @@ def cmd_poll(config, once=False):
             # 1. Update thread state in email DB
             thread_info = update_thread(db, thread_id, msg)
 
+            # 1b. Extract attachments
+            attachments = extract_attachments(msg, thread_id)
+
             # 2. Store email in email DB
             _, sender_addr = emaillib.utils.parseaddr(sender)
             db.execute("""
@@ -384,6 +442,9 @@ def cmd_poll(config, once=False):
 
             # 3. Write to Atlas inbox
             inbox_content = f"From: {sender}\nSubject: {subject}\n\n{body[:4000]}"
+            if attachments:
+                att_summary = "\n".join(f"  - {a['filename']} ({a['content_type']}, {a['size']} bytes): {a['path']}" for a in attachments)
+                inbox_content += f"\n\nAttachments:\n{att_summary}"
             inbox_msg_id = write_to_atlas_inbox(sender, inbox_content, thread_id)
 
             # Update email record with inbox msg id
@@ -393,7 +454,7 @@ def cmd_poll(config, once=False):
                   f"(thread={thread_id}, inbox={inbox_msg_id})")
 
             # 4. Queue trigger (fire after all emails stored)
-            payload = json.dumps({
+            payload_data = {
                 "inbox_message_id": inbox_msg_id,
                 "sender": sender,
                 "subject": subject,
@@ -401,7 +462,13 @@ def cmd_poll(config, once=False):
                 "thread_id": thread_id,
                 "message_id": message_id_hdr,
                 "date": msg.get("Date", ""),
-            })
+            }
+            if attachments:
+                payload_data["attachments"] = [
+                    {"filename": a["filename"], "content_type": a["content_type"],
+                     "size": a["size"], "path": a["path"]} for a in attachments
+                ]
+            payload = json.dumps(payload_data)
             trigger_queue.append((payload, thread_id))
 
             if config["mark_read"]:
@@ -438,7 +505,29 @@ def cmd_poll(config, once=False):
 
 # --- SEND command ---
 
-def cmd_send(config, to, subject, body):
+def build_message(body, attachments=None):
+    """Build a MIMEText or MIMEMultipart message depending on attachments."""
+    if not attachments:
+        return MIMEText(body)
+
+    msg = MIMEMultipart()
+    msg.attach(MIMEText(body))
+
+    for filepath in attachments:
+        path = Path(filepath)
+        if not path.exists():
+            print(f"WARNING: Attachment not found: {filepath}", file=sys.stderr)
+            continue
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(path.read_bytes())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        msg.attach(part)
+
+    return msg
+
+
+def cmd_send(config, to, subject, body, attachments=None):
     """Send a new email (not a reply)."""
     if not config["smtp_host"] or not config["username"] or not config["password"]:
         print("ERROR: SMTP not configured. Set email section in config.yml", file=sys.stderr)
@@ -446,7 +535,7 @@ def cmd_send(config, to, subject, body):
 
     db = get_email_db(config)
 
-    msg = MIMEText(body)
+    msg = build_message(body, attachments)
     msg["From"] = config["username"]
     msg["To"] = to
     msg["Subject"] = subject
@@ -492,7 +581,7 @@ def cmd_send(config, to, subject, body):
 
 # --- REPLY command ---
 
-def cmd_reply(config, thread_id, body):
+def cmd_reply(config, thread_id, body, attachments=None):
     """Reply to an existing email thread with proper threading headers."""
     if not config["smtp_host"] or not config["username"] or not config["password"]:
         print("ERROR: SMTP not configured. Set email section in config.yml", file=sys.stderr)
@@ -515,7 +604,7 @@ def cmd_reply(config, thread_id, body):
     last_message_id = thread_data["last_message_id"]
     references = json.loads(thread_data["references_chain"])
 
-    msg = MIMEText(body)
+    msg = build_message(body, attachments)
     msg["From"] = config["username"]
     msg["To"] = recipient
     msg["Subject"] = f"Re: {subject}"
@@ -654,11 +743,15 @@ Examples:
     p_send.add_argument("to", help="Recipient email address")
     p_send.add_argument("subject", help="Email subject")
     p_send.add_argument("body", help="Email body text")
+    p_send.add_argument("--attach", action="append", default=[], metavar="FILE",
+                        help="Attach a file (can be used multiple times)")
 
     # reply
     p_reply = sub.add_parser("reply", help="Reply to an email thread")
     p_reply.add_argument("thread_id", help="Thread ID to reply to")
     p_reply.add_argument("body", help="Reply body text")
+    p_reply.add_argument("--attach", action="append", default=[], metavar="FILE",
+                        help="Attach a file (can be used multiple times)")
 
     # threads
     p_threads = sub.add_parser("threads", help="List email threads")
@@ -683,10 +776,12 @@ Examples:
                 time.sleep(interval)
 
     elif args.command == "send":
-        cmd_send(config, args.to, args.subject, args.body)
+        cmd_send(config, args.to, args.subject, args.body,
+                 attachments=args.attach or None)
 
     elif args.command == "reply":
-        cmd_reply(config, args.thread_id, args.body)
+        cmd_reply(config, args.thread_id, args.body,
+                  attachments=args.attach or None)
 
     elif args.command == "threads":
         cmd_threads(config, limit=args.limit)
