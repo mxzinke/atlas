@@ -10,7 +10,6 @@ Subcommands:
   poll     [--once]              Poll signal-cli for new messages, process each
   incoming <sender> <message>    Inject a message: write to DB + inbox, fire trigger
   send     <number> <message>    Send a Signal message via signal-cli
-  deliver  <reply-json-file>     Deliver a reply (called by reply-delivery.sh)
   contacts [--limit N]           List known contacts
   history  <number> [--limit]    Show message history with a contact
 """
@@ -245,23 +244,6 @@ def cmd_send(config, to, message):
         db.close()
 
 
-# --- DELIVER command (called by reply-delivery.sh) ---
-
-def cmd_deliver(config, reply_file):
-    """Deliver a reply from reply-delivery.sh pipeline."""
-    with open(reply_file) as f:
-        reply = json.load(f)
-
-    to = reply.get("reply_to", "")
-    content = reply.get("content", "")
-
-    if not to or not content:
-        print("ERROR: Missing reply_to or content", file=sys.stderr)
-        sys.exit(1)
-
-    cmd_send(config, to, content)
-
-
 # --- CONTACTS command ---
 
 def cmd_contacts(config, limit=20):
@@ -332,7 +314,6 @@ Examples:
   signal-addon.py send +49170123 "Hi!"               # Send outgoing message
   signal-addon.py contacts                           # List contacts
   signal-addon.py history +49170123                  # Conversation history
-  signal-addon.py deliver reply.json                 # Deliver reply (internal)
         """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -352,10 +333,6 @@ Examples:
     p_send = sub.add_parser("send", help="Send a Signal message")
     p_send.add_argument("number", help="Recipient phone number")
     p_send.add_argument("message", help="Message text")
-
-    # deliver (internal)
-    p_deliver = sub.add_parser("deliver", help="Deliver a reply JSON file")
-    p_deliver.add_argument("reply_file", help="Path to reply JSON file")
 
     # contacts
     p_contacts = sub.add_parser("contacts", help="List known contacts")
@@ -384,8 +361,6 @@ Examples:
                      name=args.name, timestamp=args.timestamp)
     elif args.command == "send":
         cmd_send(config, args.number, args.message)
-    elif args.command == "deliver":
-        cmd_deliver(config, args.reply_file)
     elif args.command == "contacts":
         cmd_contacts(config, limit=args.limit)
     elif args.command == "history":

@@ -223,7 +223,7 @@ User types in /chat
   → Claude calls inbox_list → sees pending message
   → Claude calls inbox_mark(status=processing)
   → Claude processes and generates response
-  → Claude replies via CLI (signal-addon.py / email-addon.py) or inbox_mark
+  → Claude replies via CLI (`signal send` / `email reply`) or inbox_mark
   → Stop hook → no more pending → Claude writes journal → sleep
   → Web-UI shows response on refresh
 ```

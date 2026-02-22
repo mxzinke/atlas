@@ -1,0 +1,2 @@
+#!/bin/bash
+exec python3 /atlas/app/integrations/signal/signal-addon.py "$@"

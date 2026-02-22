@@ -210,7 +210,7 @@ For webhooks, also set:
 ## Escalation Pattern
 
 Trigger sessions act as filters:
-1. **Simple events**: Handle directly with CLI tools (signal-addon.py / email-addon.py) or MCP actions
+1. **Simple events**: Handle directly with CLI tools (`signal send` / `email reply`) or MCP actions
 2. **Complex events**: Escalate to main session via inbox_write (one or more tasks)
 
 ```
@@ -224,33 +224,26 @@ inbox_write(channel="task", sender="trigger:deploy", content="Run post-deploy sm
 
 ## Signal Integration (Add-on)
 
-The Signal Add-on (`app/integrations/signal/signal-addon.py`) handles all Signal operations in one module.
+The Signal Add-on provides `signal` as a CLI tool (wrapper for `app/integrations/signal/signal-addon.py`).
 
 ```bash
-# Poll signal-cli for new messages
-signal-addon.py poll --once
-
-# Inject a message directly (e.g., for testing)
-signal-addon.py incoming +491701234567 "Hello!" --name "Alice"
-
-# Send / contacts / history
-signal-addon.py send +491701234567 "Hello!"
-signal-addon.py contacts
-signal-addon.py history +491701234567
+signal send +491701234567 "Hello!"
+signal contacts
+signal history +491701234567
+signal poll --once              # Background: check signal-cli
+signal incoming +491701234567 "Hello!" --name "Alice"  # Inject test message
 ```
 
 ## Email Integration (Add-on)
 
-The Email Add-on (`app/integrations/email/email-addon.py`) handles all email operations in one module.
+The Email Add-on provides `email` as a CLI tool (wrapper for `app/integrations/email/email-addon.py`).
 
 ```bash
-# Poll IMAP for new emails
-email-addon.py poll --once
-
-# Send / reply / threads
-email-addon.py send recipient@example.com "Subject" "Body text"
-email-addon.py reply <thread_id> "Reply body"
-email-addon.py threads
+email reply <thread_id> "Reply body"
+email send recipient@example.com "Subject" "Body text"
+email threads
+email thread <thread_id>
+email poll --once               # Background: check IMAP
 ```
 
 Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one persistent session.

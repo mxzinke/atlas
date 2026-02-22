@@ -11,12 +11,12 @@ If the event payload contains `inbox_message_id`, the message is already in the 
 
 **Signal** (payload has `sender` phone number):
 1. `inbox_mark(message_id=<inbox_message_id>, status="processing")`
-2. `python3 /atlas/app/integrations/signal/signal-addon.py send "<sender>" "<reply>"`
+2. `signal send "<sender>" "<reply>"`
 3. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Replied")`
 
 **Email** (payload has `thread_id`):
 1. `inbox_mark(message_id=<inbox_message_id>, status="processing")`
-2. `python3 /atlas/app/integrations/email/email-addon.py reply "<thread_id>" "<reply body>"`
+2. `email reply "<thread_id>" "<reply body>"`
 3. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Replied")`
 
 ## Memory
@@ -49,7 +49,7 @@ If the original event had an `inbox_message_id`, mark it as done first:
 - `qmd_search` / `qmd_vector_search` — Search memory for context
 
 ### CLI (channel interaction)
-- Signal: `/atlas/app/integrations/signal/signal-addon.py send|contacts|history`
-- Email: `/atlas/app/integrations/email/email-addon.py reply|send|threads|thread`
+- Signal: `signal send|contacts|history`
+- Email: `email reply|send|threads|thread`
 
 ## Process the following event:

@@ -184,8 +184,8 @@ Claude has access to these tools via the inbox-mcp server:
 - `inbox_stats` — Inbox statistics
 
 **Channel CLI Tools** (external communication):
-- Signal: `signal-addon.py send|contacts|history` — Send messages, list contacts, view history
-- Email: `email-addon.py reply|send|threads|thread` — Reply to threads, send emails, list threads
+- `signal send|contacts|history` — Send Signal messages, list contacts, view history
+- `email reply|send|threads|thread` — Reply to email threads, send emails, list threads
 
 **Triggers:**
 - `trigger_list` — List all triggers

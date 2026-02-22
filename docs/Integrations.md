@@ -8,8 +8,8 @@ Atlas supports Signal and Email as communication channels. Each integration writ
 External Channel          Atlas
 ═══════════════           ═════
 
-Signal message ──▸ signal-addon.py incoming <sender> <message>
-                    │                     (or: signal-addon.py poll)
+Signal message ──▸ signal incoming <sender> <message>
+                    │                     (or: signal poll)
                     ├─▸ UPDATE signal.db contacts + messages
                     ├─▸ INSERT INTO atlas inbox (channel=signal, reply_to=sender)
                     │
@@ -24,14 +24,14 @@ Signal message ──▸ signal-addon.py incoming <sender> <message>
                                                 │
                                     ┌───────────┴───────────┐
                                     │                       │
-                          signal-addon.py send          inbox_write
+                          signal send               inbox_write
                           (direct CLI call)             (escalate)
                                     │                       │
                                     ▼                       ▼
                             signal-cli send         Main session
 
 
-Email (IMAP) ──▸ email-addon.py poll
+Email (IMAP) ──▸ email poll
                     │
                     ├─▸ UPDATE email.db threads + emails
                     ├─▸ INSERT INTO atlas inbox (channel=email, reply_to=thread_id)
@@ -47,7 +47,7 @@ Email (IMAP) ──▸ email-addon.py poll
                                                 │
                                     ┌───────────┴───────────┐
                                     │                       │
-                          email-addon.py reply           inbox_write
+                          email reply                inbox_write
                           (direct CLI call)              (escalate)
                                     │                       │
                                     ▼                       ▼
@@ -73,7 +73,7 @@ This works identically for Signal (per contact), Email (per thread), and any fut
 
 ## Signal Add-on
 
-The Signal Add-on (`app/integrations/signal/signal-addon.py`) handles all Signal operations: polling signal-cli, injecting messages, sending, replying, and contact tracking. One SQLite database per phone number.
+The Signal Add-on provides the `signal` CLI tool (wrapper for `app/integrations/signal/signal-addon.py`). Handles polling signal-cli, injecting messages, sending, and contact tracking. One SQLite database per phone number.
 
 ### Prerequisites
 
@@ -111,7 +111,7 @@ trigger_create:
     {{payload}}
 
     The payload contains inbox_message_id and sender. Use inbox_mark to claim it,
-    then reply via CLI: signal-addon.py send. Escalate complex tasks via inbox_write.
+    then reply via CLI: signal send. Escalate complex tasks via inbox_write.
 ```
 
 **3. Start polling** (add to supervisord or crontab):
@@ -127,21 +127,21 @@ python3 /atlas/app/integrations/signal/signal-addon.py poll
 ### CLI Usage
 
 ```bash
-# Poll signal-cli for new messages
-signal-addon.py poll --once
-signal-addon.py poll                               # continuous
-
-# Inject a message directly (e.g., from external webhook)
-signal-addon.py incoming +491701234567 "Hello!" --name "Alice"
-
 # Send a message
-signal-addon.py send +491701234567 "Hi!"
+signal send +491701234567 "Hi!"
 
 # List known contacts
-signal-addon.py contacts
+signal contacts
 
 # Show conversation history
-signal-addon.py history +491701234567
+signal history +491701234567
+
+# Poll signal-cli for new messages (background)
+signal poll --once
+signal poll                                        # continuous
+
+# Inject a message directly (e.g., for testing)
+signal incoming +491701234567 "Hello!" --name "Alice"
 ```
 
 ### Signal Database
@@ -159,7 +159,7 @@ If `signal.whitelist` is set, only listed numbers can reach Atlas. Others are si
 
 ## Email Add-on
 
-The Email Add-on (`app/integrations/email/email-addon.py`) handles all email operations: IMAP polling, SMTP sending/replying, and thread tracking. One SQLite database per account.
+The Email Add-on provides the `email` CLI tool (wrapper for `app/integrations/email/email-addon.py`). Handles IMAP polling, SMTP sending/replying, and thread tracking. One SQLite database per account.
 
 ### Prerequisites
 
@@ -206,7 +206,7 @@ trigger_create:
     {{payload}}
 
     The payload contains inbox_message_id and thread_id. Use inbox_mark to claim it,
-    then reply via CLI: email-addon.py reply. Escalate complex tasks via inbox_write.
+    then reply via CLI: email reply. Escalate complex tasks via inbox_write.
 ```
 
 **4. Start polling**:
@@ -222,21 +222,21 @@ python3 /atlas/app/integrations/email/email-addon.py poll
 ### CLI Usage
 
 ```bash
-# Poll IMAP for new emails
-email-addon.py poll --once
-email-addon.py poll              # continuous mode
+# Reply to an existing thread (uses proper In-Reply-To + References headers)
+email reply <thread_id> "Reply body"
 
 # Send a new email
-email-addon.py send alice@example.com "Subject line" "Body text"
-
-# Reply to an existing thread (uses proper In-Reply-To + References headers)
-email-addon.py reply <thread_id> "Reply body"
+email send alice@example.com "Subject line" "Body text"
 
 # List tracked threads
-email-addon.py threads
+email threads
 
 # Show thread detail (participants, message history)
-email-addon.py thread <thread_id>
+email thread <thread_id>
+
+# Poll IMAP for new emails (background)
+email poll --once
+email poll                       # continuous mode
 ```
 
 ### Email Database
@@ -288,9 +288,9 @@ This means all emails in a thread share the same session key → same persistent
 
 Trigger sessions reply directly via CLI tools — no intermediate delivery layer:
 
-- **Signal**: `python3 /atlas/app/integrations/signal/signal-addon.py send "<number>" "<message>"`
+- **Signal**: `signal send "<number>" "<message>"`
   - Sends via signal-cli, tracks in signal.db
-- **Email**: `python3 /atlas/app/integrations/email/email-addon.py reply "<thread_id>" "<body>"`
+- **Email**: `email reply "<thread_id>" "<body>"`
   - Sends via SMTP with proper threading headers, tracks in email.db
 - **Web/Internal**: `inbox_mark` with status=`done` and response_summary
 
@@ -316,12 +316,12 @@ After replying, trigger sessions mark the inbox message as done via `inbox_mark`
 
 ```bash
 # Signal
-python3 /atlas/app/integrations/signal/signal-addon.py incoming +49170123 "Hello!"
-python3 /atlas/app/integrations/signal/signal-addon.py send +49170123 "Hi!"
-python3 /atlas/app/integrations/signal/signal-addon.py contacts
+signal send +49170123 "Hi!"
+signal contacts
+signal history +49170123
 
 # Email
-python3 /atlas/app/integrations/email/email-addon.py send alice@x.com "Subject" "Body"
-python3 /atlas/app/integrations/email/email-addon.py reply <thread_id> "Reply body"
-python3 /atlas/app/integrations/email/email-addon.py threads
+email reply <thread_id> "Reply body"
+email send alice@x.com "Subject" "Body"
+email threads
 ```

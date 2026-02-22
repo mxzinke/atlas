@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+ENV PATH="/atlas/app/bin:/atlas/workspace/bin:/root/.bun/bin:${PATH}"
 
 # Install supercronic (cron replacement)
 RUN SUPERCRONIC_URL="https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64" && \
@@ -58,7 +58,8 @@ COPY .claude/settings.json /atlas/app/.claude/settings.json
 RUN chmod +x /atlas/app/init.sh \
     && chmod +x /atlas/app/hooks/*.sh \
     && chmod +x /atlas/app/watcher.sh \
-    && chmod +x /atlas/app/triggers/cron/*.sh
+    && chmod +x /atlas/app/triggers/cron/*.sh \
+    && chmod +x /atlas/app/bin/*
 
 # Install Inbox-MCP dependencies
 WORKDIR /atlas/app/inbox-mcp

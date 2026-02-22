@@ -9,7 +9,7 @@ The event payload contains `inbox_message_id` and `sender` (phone number). To re
 
 1. `inbox_mark(message_id=<inbox_message_id>, status="processing")`
 2. Process the request (use memory search for context if needed)
-3. Send reply via CLI: `python3 /atlas/app/integrations/signal/signal-addon.py send "<sender>" "<your reply>"`
+3. Send reply: `signal send "<sender>" "<your reply>"`
 4. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Replied via Signal")`
 
 **Do not include email-style headers, signatures, or greetings** — this is a chat.
@@ -28,7 +28,7 @@ If the request needs complex work (code changes, file modifications, deep analys
 
 1. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Escalated")`
 2. `inbox_write(channel="task", sender="trigger:{{trigger_name}}", content="<clear task description with context>")`
-3. Send acknowledgment: `python3 /atlas/app/integrations/signal/signal-addon.py send "<sender>" "Got it, I'll handle that. Give me a moment."`
+3. Send acknowledgment: `signal send "<sender>" "Got it, I'll handle that. Give me a moment."`
 
 ## Context
 
@@ -43,11 +43,9 @@ Use `qmd_search` or `qmd_vector_search` to look up relevant memory before respon
 - `qmd_search` / `qmd_vector_search` — Search memory for context
 
 ### CLI (channel interaction)
-- `signal-addon.py send <number> <message>` — Send a reply to a Signal contact
-- `signal-addon.py contacts` — List known Signal contacts
-- `signal-addon.py history <number>` — Show message history with a contact
-
-All CLI tools are at `/atlas/app/integrations/signal/signal-addon.py`.
+- `signal send <number> <message>` — Send a reply to a Signal contact
+- `signal contacts` — List known Signal contacts
+- `signal history <number>` — Show message history with a contact
 
 ## Memory
 

@@ -9,7 +9,7 @@ The event payload contains `inbox_message_id`, `sender`, `subject`, and `thread_
 
 1. `inbox_mark(message_id=<inbox_message_id>, status="processing")`
 2. Process the request (use memory search for context if needed)
-3. Reply via CLI: `python3 /atlas/app/integrations/email/email-addon.py reply "<thread_id>" "<your reply body>"`
+3. Reply: `email reply "<thread_id>" "<your reply body>"`
 4. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Replied via email")`
 
 The reply is sent via SMTP with proper `In-Reply-To` and `References` headers — the email thread is maintained automatically. The subject line (`Re: ...`) and recipient are handled by the CLI tool. **Only provide the reply body**, not headers.
@@ -30,7 +30,7 @@ If the email requires complex work (code changes, research, multi-step tasks), e
 
 1. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Escalated to main session")`
 2. `inbox_write(channel="task", sender="trigger:{{trigger_name}}", content="<task description with full email context>")`
-3. Send acknowledgment: `python3 /atlas/app/integrations/email/email-addon.py reply "<thread_id>" "Hi,\n\nThanks for your email. I'm looking into this and will get back to you shortly.\n\nBest,"`
+3. Send acknowledgment: `email reply "<thread_id>" "Hi,\n\nThanks for your email. I'm looking into this and will get back to you shortly.\n\nBest,"`
 
 When escalating, include the full email context (sender, subject, body) in the task description so the main session has everything it needs.
 
@@ -47,12 +47,10 @@ Use `qmd_search` or `qmd_vector_search` to look up relevant memory before respon
 - `qmd_search` / `qmd_vector_search` — Search memory for context
 
 ### CLI (channel interaction)
-- `email-addon.py reply <thread_id> <body>` — Reply to an email thread (threading automatic)
-- `email-addon.py send <to> <subject> <body>` — Send a new email
-- `email-addon.py threads` — List tracked email threads
-- `email-addon.py thread <thread_id>` — Show thread detail
-
-All CLI tools are at `/atlas/app/integrations/email/email-addon.py`.
+- `email reply <thread_id> <body>` — Reply to an email thread (threading automatic)
+- `email send <to> <subject> <body>` — Send a new email
+- `email threads` — List tracked email threads
+- `email thread <thread_id>` — Show thread detail
 
 ## Memory
 

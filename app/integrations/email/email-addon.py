@@ -560,24 +560,6 @@ def cmd_reply(config, thread_id, body):
         db.close()
 
 
-# --- DELIVER command (called by reply-delivery.sh) ---
-
-def cmd_deliver(config, reply_file):
-    """Deliver a reply from reply-delivery.sh pipeline. Reads reply JSON, sends via SMTP."""
-    with open(reply_file) as f:
-        reply = json.load(f)
-
-    thread_id = reply.get("reply_to", "")
-    content = reply.get("content", "")
-
-    if not content:
-        print("ERROR: Empty reply content", file=sys.stderr)
-        sys.exit(1)
-
-    # Use the reply subcommand logic
-    cmd_reply(config, thread_id, content)
-
-
 # --- THREADS command ---
 
 def cmd_threads(config, limit=20):
@@ -656,7 +638,6 @@ Examples:
   email-addon.py reply <thread_id> "Reply body"
   email-addon.py threads              # List all threads
   email-addon.py thread <thread_id>   # Thread detail
-  email-addon.py deliver reply.json   # Deliver a reply file (used by reply-delivery.sh)
         """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -675,10 +656,6 @@ Examples:
     p_reply = sub.add_parser("reply", help="Reply to an email thread")
     p_reply.add_argument("thread_id", help="Thread ID to reply to")
     p_reply.add_argument("body", help="Reply body text")
-
-    # deliver (internal, called by reply-delivery.sh)
-    p_deliver = sub.add_parser("deliver", help="Deliver a reply JSON file via SMTP")
-    p_deliver.add_argument("reply_file", help="Path to reply JSON file")
 
     # threads
     p_threads = sub.add_parser("threads", help="List email threads")
@@ -707,9 +684,6 @@ Examples:
 
     elif args.command == "reply":
         cmd_reply(config, args.thread_id, args.body)
-
-    elif args.command == "deliver":
-        cmd_deliver(config, args.reply_file)
 
     elif args.command == "threads":
         cmd_threads(config, limit=args.limit)
