@@ -96,16 +96,26 @@ if [ ! -f "$WORKSPACE/soul.md" ]; then
 fi
 
 # Default skills (Claude Code convention: <name>/SKILL.md)
-if [ -d /atlas/app/defaults/skills ]; then
-  for skill_dir in /atlas/app/defaults/skills/*/; do
-    SKILL_NAME=$(basename "$skill_dir")
-    DEST="$WORKSPACE/skills/$SKILL_NAME"
-    if [ ! -d "$DEST" ]; then
-      cp -r "$skill_dir" "$DEST"
-      echo "  Created skill: $SKILL_NAME"
-    fi
-  done
-fi
+# Migrate old flat files → directory structure
+for old_skill in "$WORKSPACE"/skills/*.md; do
+  [ -f "$old_skill" ] || continue
+  OLD_NAME=$(basename "$old_skill" .md)
+  if [ -d "$WORKSPACE/skills/$OLD_NAME" ]; then
+    rm "$old_skill"
+    echo "  Migrated skill: removed old $OLD_NAME.md (replaced by $OLD_NAME/SKILL.md)"
+  fi
+done
+
+# Copy default skills that don't exist yet
+for skill_dir in /atlas/app/defaults/skills/*/; do
+  [ -d "$skill_dir" ] || continue
+  SKILL_NAME=$(basename "$skill_dir")
+  DEST="$WORKSPACE/skills/$SKILL_NAME"
+  if [ ! -d "$DEST" ]; then
+    cp -r "$skill_dir" "$DEST"
+    echo "  Created skill: $SKILL_NAME"
+  fi
+done
 
 # ── Phase 6: Initialize SQLite DB ──
 echo "[$(date)] Phase 6: Database init"
