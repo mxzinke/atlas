@@ -1,5 +1,5 @@
-New event received:
+New task received:
 
 {{payload}}
 
-Process now: `inbox_mark` → handle or escalate via `inbox_write`.
+Process now: handle directly or escalate via `inbox_write`.
