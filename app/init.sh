@@ -61,24 +61,31 @@ if [ ! -f "$WORKSPACE/identity.md" ]; then
 ## Name
 Atlas
 
-## Behavior & Personality
-You are a helpful, structured agent. You communicate clearly and directly.
-
 ## User
-(Please configure in the Web-UI at /settings)
+(Configure in the Web-UI at /settings)
 
-## Primary Language
+## Language
 English
 
+## Communication Style
+- Be direct and concise. Say what matters, skip the rest.
+- No filler phrases ("Great question!", "I'd be happy to...", "Let me help you with that").
+- No emojis in responses.
+- Assume competence — don't over-explain obvious things.
+- When uncertain, say so plainly instead of hedging with qualifiers.
+- Match the user's tone and language. If they write in German, respond in German.
+
 ## Capabilities
-- Internet: yes (Playwright MCP)
-- Filesystem: yes (/atlas/workspace/)
-- Team spawning: yes (unlimited)
-- Signal: no
+- Internet access (Playwright MCP)
+- Filesystem (/atlas/workspace/)
+- Team spawning (subagents, unlimited)
+- Memory (long-term via MEMORY.md, daily journals, QMD search)
+- Triggers (cron, webhook, manual)
 
 ## Restrictions
-- No purchases without explicit confirmation
-- Do not read the secrets directory
+- No purchases or payments without explicit user confirmation
+- Never read /atlas/workspace/secrets/
+- Never modify /atlas/app/ (read-only core)
 IDENTITY
   echo "  Created default identity.md"
 fi
@@ -161,38 +168,9 @@ EXTENSIONS
 fi
 
 # ── Phase 8: Claude Code Settings ──
-echo "[$(date)] Phase 8: Claude Code settings"
-CLAUDE_SETTINGS_DIR="/atlas/app/.claude"
-mkdir -p "$CLAUDE_SETTINGS_DIR"
-# The settings.json with hooks is already in the image at /atlas/app/.claude/settings.json
-# Copy it if not already there
-if [ ! -f "$CLAUDE_SETTINGS_DIR/settings.json" ]; then
-  cat > "$CLAUDE_SETTINGS_DIR/settings.json" << 'SETTINGS'
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  },
-  "hooks": {
-    "SessionStart": [{
-      "hooks": [{ "type": "command", "command": "/atlas/app/hooks/session-start.sh" }]
-    }],
-    "Stop": [{
-      "hooks": [{ "type": "command", "command": "/atlas/app/hooks/stop.sh" }]
-    }],
-    "PreCompact": [
-      { "matcher": "auto",
-        "hooks": [{ "type": "command", "command": "/atlas/app/hooks/pre-compact-auto.sh" }] },
-      { "matcher": "manual",
-        "hooks": [{ "type": "command", "command": "/atlas/app/hooks/pre-compact-manual.sh" }] }
-    ],
-    "SubagentStop": [{
-      "hooks": [{ "type": "command", "command": "/atlas/app/hooks/subagent-stop.sh" }]
-    }]
-  }
-}
-SETTINGS
-  echo "  Created Claude Code settings"
-fi
+# Regenerated on every start to pick up model changes from config.yml
+echo "[$(date)] Phase 8: Claude Code settings (from config.yml)"
+bun run /atlas/app/hooks/generate-settings.ts || echo "  ⚠ Settings generation failed (non-fatal)"
 
 # ── Phase 9: Sync Crontab from Triggers ──
 echo "[$(date)] Phase 9: Crontab sync"

@@ -1,6 +1,11 @@
 # Atlas Configuration
 # Editable by Claude and via the Web-UI
 
+models:
+  main: claude-sonnet-4-6       # Main session model (claude -p --model)
+  subagent_review: claude-sonnet-4-6  # SubagentStop quality gate (prompt hook)
+  hooks: claude-haiku-4-5       # Default model for other prompt/agent hooks
+
 memory:
   qmd_search_mode: search     # search (BM25) | vsearch (vector) | query (hybrid)
   qmd_max_results: 6

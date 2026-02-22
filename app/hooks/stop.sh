@@ -41,13 +41,15 @@ if [ -f "$DB" ]; then
     NEXT_MSG=$(sqlite3 -json "$DB" "SELECT id, channel, sender, content, created_at FROM messages WHERE status='pending' ORDER BY created_at ASC LIMIT 1;" 2>/dev/null || echo "")
 
     if [ -n "$NEXT_MSG" ]; then
-      echo "--- NEW INBOX MESSAGE ---"
-      echo "$NEXT_MSG"
-      echo ""
-      echo "Process this message. Use inbox_mark to set status to 'processing', handle it, then use reply_send to respond."
-      echo "$((PENDING - 1)) more messages pending in the inbox."
-      # Exit 1 = continue processing (don't sleep)
-      exit 1
+      # Exit 2 = block stopping, stderr becomes feedback to Claude
+      {
+        echo "--- NEW INBOX MESSAGE ---"
+        echo "$NEXT_MSG"
+        echo ""
+        echo "Process this message. Use inbox_mark to set status to 'processing', handle it, then use reply_send to respond."
+        echo "$((PENDING - 1)) more messages pending in the inbox."
+      } >&2
+      exit 2
     fi
   fi
 fi
