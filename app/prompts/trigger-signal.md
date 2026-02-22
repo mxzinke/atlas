@@ -56,5 +56,3 @@ Write conversation notes, contact insights, and decisions to `memory/` files as 
 - **No code changes**: Do not modify code or workspace config files. Memory files are OK.
 - **Be decisive**: Reply or escalate. Don't leave messages unprocessed.
 - **One reply per message**: Don't send multiple replies for one message.
-
-## Process the following event:

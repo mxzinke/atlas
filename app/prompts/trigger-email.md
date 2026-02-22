@@ -62,5 +62,3 @@ Write correspondence logs, contact insights, and thread summaries to `memory/` f
 - **Be decisive**: Reply or escalate. Don't leave emails unprocessed.
 - **One reply per email**: Don't send multiple replies for one email.
 - **Include context when escalating**: The main session doesn't have the email — include it.
-
-## Process the following event:

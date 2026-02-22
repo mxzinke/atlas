@@ -51,5 +51,3 @@ If the original event had an `inbox_message_id`, mark it as done first:
 ### CLI (channel interaction)
 - Signal: `signal send|contacts|history`
 - Email: `email reply|send|threads|thread`
-
-## Process the following event:
