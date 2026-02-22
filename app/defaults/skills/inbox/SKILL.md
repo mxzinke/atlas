@@ -12,10 +12,11 @@ The inbox is your message queue. Messages arrive from web chat, webhooks, cron t
 1. **List pending**: `inbox_list` (default: status=pending)
 2. **Claim**: `inbox_mark` with status=`processing` — prevents duplicate processing
 3. **Work**: Do whatever the message asks
-4. **Reply**: `reply_send` with message_id and your response content
-   - Web channel: stores response in `response_summary`, visible in the web-ui
-   - Signal/email: writes reply JSON to `workspace/inbox/replies/<id>.json` for delivery
-   - Internal: marks as done (no external delivery)
+4. **Reply via CLI** (external channels):
+   - Signal: `python3 /atlas/app/integrations/signal/signal-addon.py send "<number>" "<message>"`
+   - Email: `python3 /atlas/app/integrations/email/email-addon.py reply "<thread_id>" "<body>"`
+   - Web/internal: `inbox_mark` with status=`done` and response_summary
+5. **Mark done**: `inbox_mark` with status=`done` and response_summary
 
 ## Channels
 
@@ -23,8 +24,8 @@ The inbox is your message queue. Messages arrive from web chat, webhooks, cron t
 |---------|--------|----------------|
 | `web` | Web-ui chat | Stored in DB, shown in chat |
 | `internal` | Cron triggers, self-messages | Marked done, no delivery |
-| `signal` | Signal messenger | Reply file for signal-cli |
-| `email` | Email integration | Reply file for sendmail |
+| `signal` | Signal messenger | CLI: signal-addon.py send |
+| `email` | Email integration | CLI: email-addon.py reply |
 | `webhook` | External webhook POST | Marked done |
 
 ## Writing Messages
@@ -41,6 +42,6 @@ Use `inbox_write` to create messages for yourself (reminders, follow-ups):
 ## Important
 
 - Always mark messages as `processing` before working on them
-- Always `reply_send` when done — this marks the message as `done` and delivers the reply
+- Reply via CLI tools for external channels, then `inbox_mark` with status=`done`
 - Process messages in order (oldest first)
 - The stop hook automatically delivers the next pending message after each response

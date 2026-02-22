@@ -24,13 +24,11 @@ Signal message ──▸ signal-addon.py incoming <sender> <message>
                                                 │
                                     ┌───────────┴───────────┐
                                     │                       │
-                          reply_send(inbox_msg_id)      inbox_write
-                                    │                  (escalate)
-                                    ▼                       │
-                            replies/N.json                  ▼
-                                    │               Main session
-                         reply-delivery.sh
-                            └─▸ signal-addon.py deliver → signal-cli send
+                          signal-addon.py send          inbox_write
+                          (direct CLI call)             (escalate)
+                                    │                       │
+                                    ▼                       ▼
+                            signal-cli send         Main session
 
 
 Email (IMAP) ──▸ email-addon.py poll
@@ -49,13 +47,12 @@ Email (IMAP) ──▸ email-addon.py poll
                                                 │
                                     ┌───────────┴───────────┐
                                     │                       │
-                          reply_send(inbox_msg_id)      inbox_write
-                                    │                  (escalate)
-                                    ▼                       │
-                            replies/N.json                  ▼
-                                    │               Main session
-                         reply-delivery.sh
-                            └─▸ email-addon.py deliver → SMTP with threading headers
+                          email-addon.py reply           inbox_write
+                          (direct CLI call)              (escalate)
+                                    │                       │
+                                    ▼                       ▼
+                            SMTP with threading     Main session
+                            headers
 ```
 
 ## IPC Socket Injection
@@ -113,11 +110,11 @@ trigger_create:
 
     {{payload}}
 
-    The payload contains inbox_message_id. Use inbox_mark to claim it,
-    then reply_send to respond. Escalate complex tasks via inbox_write.
+    The payload contains inbox_message_id and sender. Use inbox_mark to claim it,
+    then reply via CLI: signal-addon.py send. Escalate complex tasks via inbox_write.
 ```
 
-**3. Start services** (add to supervisord or crontab):
+**3. Start polling** (add to supervisord or crontab):
 
 ```bash
 # Continuous (supervisord):
@@ -125,9 +122,6 @@ python3 /atlas/app/integrations/signal/signal-addon.py poll
 
 # Cron (every minute):
 * * * * *  python3 /atlas/app/integrations/signal/signal-addon.py poll --once
-
-# Reply delivery (continuous):
-/atlas/app/integrations/reply-delivery.sh
 ```
 
 ### CLI Usage
@@ -211,11 +205,11 @@ trigger_create:
 
     {{payload}}
 
-    The payload contains inbox_message_id. Use inbox_mark to claim it,
-    then reply_send to respond. Escalate complex tasks via inbox_write.
+    The payload contains inbox_message_id and thread_id. Use inbox_mark to claim it,
+    then reply via CLI: email-addon.py reply. Escalate complex tasks via inbox_write.
 ```
 
-**4. Start services**:
+**4. Start polling**:
 
 ```bash
 # Continuous (supervisord):
@@ -223,9 +217,6 @@ python3 /atlas/app/integrations/email/email-addon.py poll
 
 # Cron (every 2 minutes):
 */2 * * * *  python3 /atlas/app/integrations/email/email-addon.py poll --once
-
-# Reply delivery (continuous):
-/atlas/app/integrations/reply-delivery.sh
 ```
 
 ### CLI Usage
@@ -293,48 +284,32 @@ This means all emails in a thread share the same session key → same persistent
 
 `email.whitelist` accepts full addresses (`alice@example.com`) or domains (`example.org`). Empty = accept all.
 
-## Reply Delivery
+## Reply Flow
 
-Both Signal and Email use the same delivery mechanism:
+Trigger sessions reply directly via CLI tools — no intermediate delivery layer:
 
-1. Trigger session calls `reply_send(inbox_message_id, content)`
-2. inbox-mcp writes `workspace/inbox/replies/<message_id>.json`:
-   ```json
-   {
-     "channel": "email",
-     "reply_to": "abc123_mail.com",
-     "content": "Here's what I found...",
-     "timestamp": "2026-02-22T10:30:00Z"
-   }
-   ```
-3. `reply-delivery.sh` picks up the file and routes by channel:
-   - `signal` → `signal-addon.py deliver` → `signal-cli send` (tracks in signal.db)
-   - `email` → `email-addon.py deliver` → SMTP with proper threading headers (tracks in email.db)
-4. Delivered files are moved to `replies/archive/`
+- **Signal**: `python3 /atlas/app/integrations/signal/signal-addon.py send "<number>" "<message>"`
+  - Sends via signal-cli, tracks in signal.db
+- **Email**: `python3 /atlas/app/integrations/email/email-addon.py reply "<thread_id>" "<body>"`
+  - Sends via SMTP with proper threading headers, tracks in email.db
+- **Web/Internal**: `inbox_mark` with status=`done` and response_summary
 
-Start the delivery daemon:
-
-```bash
-# Continuous (recommended):
-/atlas/app/integrations/reply-delivery.sh
-```
+After replying, trigger sessions mark the inbox message as done via `inbox_mark`.
 
 ## Quick Reference
 
-### Enable Signal in 3 Steps
+### Enable Signal in 2 Steps
 
 ```bash
 # 1. Install signal-cli + configure workspace/config.yml (signal section)
-# 2. Create trigger: "Create a persistent Signal chat trigger"
-# 3. Start: signal-addon.py poll + reply-delivery.sh
+# 2. Create trigger: "Create a persistent Signal chat trigger" + start polling
 ```
 
-### Enable Email in 3 Steps
+### Enable Email in 2 Steps
 
 ```bash
 # 1. Configure workspace/config.yml (email section) + store password
-# 2. Create trigger: "Create a persistent email handler trigger"
-# 3. Start: email-addon.py poll + reply-delivery.sh
+# 2. Create trigger: "Create a persistent email handler trigger" + start polling
 ```
 
 ### Direct Usage

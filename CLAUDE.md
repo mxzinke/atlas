@@ -51,7 +51,7 @@ Atlas is a containerized autonomous agent system built on Claude Code. It uses a
 | `app/triggers/trigger.sh` | Trigger runner: IPC socket inject or spawn Claude session |
 | `app/triggers/sync-crontab.ts` | Auto-generates crontab from DB triggers |
 | `app/triggers/cron/` | Cron-specific scripts (daily-cleanup, event) |
-| `app/integrations/` | Reply delivery daemon |
+| `app/integrations/` | Channel CLI tools (signal, email) |
 | `app/integrations/signal/` | Signal Add-on (poll, incoming, send, contacts, history) |
 | `app/integrations/email/` | Email Add-on (poll, send, reply, thread tracking) |
 | `app/prompts/` | Prompt templates: trigger-signal.md, trigger-email.md, trigger-session.md |
@@ -82,7 +82,7 @@ docker run -it --rm -v $(pwd)/atlas-home:/root atlas claude login
 ## MCP Servers
 
 ### Inbox-MCP (stdio)
-Tools: `inbox_list`, `inbox_mark`, `inbox_write`, `reply_send`, `inbox_stats`, `trigger_list`, `trigger_create`, `trigger_update`, `trigger_delete`
+Tools: `inbox_list`, `inbox_mark`, `inbox_write`, `inbox_stats`, `trigger_list`, `trigger_create`, `trigger_update`, `trigger_delete`
 
 ### QMD-MCP (HTTP, port 8181)
 Tools: `qmd_search`, `qmd_vector_search`, `qmd_deep_search`, `qmd_get`, `qmd_multi_get`, `qmd_status`

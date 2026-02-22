@@ -53,7 +53,7 @@ if [ -f "$DB" ]; then
         echo "--- NEW INBOX MESSAGE ---"
         echo "$NEXT_MSG"
         echo ""
-        echo "Process this message. Use inbox_mark to set status to 'processing', handle it, then use reply_send to respond."
+        echo "Process this message. Use inbox_mark to set status to 'processing', handle it, then reply via CLI (signal-addon.py send / email-addon.py reply) and mark done."
         echo "$((PENDING - 1)) more messages pending in the inbox."
       } >&2
       exit 2

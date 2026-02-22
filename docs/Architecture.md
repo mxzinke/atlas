@@ -70,7 +70,6 @@ MCP server that gives Claude tools to manage its inbox and triggers. Communicate
 | `inbox_list` | List messages by status/channel |
 | `inbox_mark` | Mark message as processing/done |
 | `inbox_write` | Write new message (touches `.wake`) |
-| `reply_send` | Reply via the original channel |
 | `inbox_stats` | Message statistics |
 | `trigger_list` | List all triggers |
 | `trigger_create` | Create new trigger |
@@ -224,7 +223,7 @@ User types in /chat
   → Claude calls inbox_list → sees pending message
   → Claude calls inbox_mark(status=processing)
   → Claude processes and generates response
-  → Claude calls reply_send → response stored in response_summary
+  → Claude replies via CLI (signal-addon.py / email-addon.py) or inbox_mark
   → Stop hook → no more pending → Claude writes journal → sleep
   → Web-UI shows response on refresh
 ```
@@ -244,7 +243,7 @@ Event arrives (cron schedule / webhook POST / manual run)
     - persistent: lookup trigger_sessions by (name, session_key) → resume or new
   → SessionStart hook detects ATLAS_TRIGGER → loads minimal context
   → Trigger session processes the event:
-    Option A: Handles directly (reply_send, MCP actions) → done
+    Option A: Handles directly (CLI tools, MCP actions) → done
     Option B: Escalates to main via inbox_write (1..N tasks)
   → inbox_write touches .wake → watcher resumes main session
   → trigger.sh saves session ID to trigger_sessions (if persistent)

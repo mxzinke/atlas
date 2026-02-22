@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { mkdirSync, writeFileSync, closeSync, openSync } from "fs";
+import { mkdirSync, closeSync, openSync } from "fs";
 import { getDb } from "./db";
 
 function syncCrontab(): void {
@@ -91,76 +91,6 @@ server.tool(
 
     return {
       content: [{ type: "text" as const, text: JSON.stringify(message, null, 2) }],
-    };
-  }
-);
-
-// --- Tool: reply_send ---
-server.tool(
-  "reply_send",
-  "Send a reply via the original channel",
-  {
-    message_id: z.number().describe("ID of the original message to reply to"),
-    content: z.string().describe("Reply content"),
-  },
-  async ({ message_id, content }) => {
-    const db = getDb();
-    const original = db.prepare("SELECT * FROM messages WHERE id = ?").get(message_id) as
-      | { id: number; channel: string; reply_to: string | null }
-      | undefined;
-
-    if (!original) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "Message not found" }) }],
-      };
-    }
-
-    let delivery = "";
-
-    switch (original.channel) {
-      case "web":
-        db.prepare(
-          "UPDATE messages SET status = 'done', response_summary = ?, processed_at = datetime('now') WHERE id = ?"
-        ).run(content, message_id);
-        delivery = "Reply stored in response_summary (web channel)";
-        break;
-
-      case "signal":
-      case "email": {
-        const repliesDir = "/atlas/workspace/inbox/replies";
-        mkdirSync(repliesDir, { recursive: true });
-        const replyData = {
-          channel: original.channel,
-          reply_to: original.reply_to,
-          content,
-          timestamp: new Date().toISOString(),
-        };
-        writeFileSync(`${repliesDir}/${message_id}.json`, JSON.stringify(replyData, null, 2));
-        db.prepare(
-          "UPDATE messages SET status = 'done', response_summary = ?, processed_at = datetime('now') WHERE id = ?"
-        ).run(content, message_id);
-        delivery = `Reply written to replies/${message_id}.json (${original.channel} channel)`;
-        break;
-      }
-
-      case "internal":
-        db.prepare(
-          "UPDATE messages SET status = 'done', response_summary = ?, processed_at = datetime('now') WHERE id = ?"
-        ).run(content, message_id);
-        delivery = "Marked as done (internal channel)";
-        break;
-
-      default:
-        delivery = `Unknown channel: ${original.channel}`;
-    }
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ message_id, channel: original.channel, delivery }, null, 2),
-        },
-      ],
     };
   }
 );

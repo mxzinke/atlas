@@ -181,8 +181,11 @@ Claude has access to these tools via the inbox-mcp server:
 - `inbox_list` — List messages by status/channel
 - `inbox_mark` — Update message status
 - `inbox_write` — Create new message (triggers wake)
-- `reply_send` — Reply via original channel
 - `inbox_stats` — Inbox statistics
+
+**Channel CLI Tools** (external communication):
+- Signal: `signal-addon.py send|contacts|history` — Send messages, list contacts, view history
+- Email: `email-addon.py reply|send|threads|thread` — Reply to threads, send emails, list threads
 
 **Triggers:**
 - `trigger_list` — List all triggers

@@ -24,7 +24,7 @@ Event arrives (cron / webhook / manual)
 ┌──────────────┐  ┌──────────────────────┐
 │ Respond      │  │ inbox_write() to     │
 │ directly     │  │ main session (1..N   │
-│ (reply_send, │  │ tasks) → .wake       │
+│ (CLI tools,  │  │ tasks) → .wake       │
 │  MCP action) │  │ → watcher → main     │
 └──────────────┘  └──────────────────────┘
 ```
@@ -211,7 +211,7 @@ The `{{payload}}` placeholder is replaced with the request body:
 Trigger sessions act as a first-line filter. The escalation flow:
 
 1. **Trigger session processes the event** using its prompt
-2. **Simple case**: Handle directly — respond via `reply_send`, take quick MCP actions, done
+2. **Simple case**: Handle directly — respond via CLI tools (signal-addon.py / email-addon.py), take quick MCP actions, done
 3. **Complex case**: Write one or more tasks to the main session inbox via `inbox_write`
 4. `inbox_write` automatically touches `.wake` → watcher resumes main session
 5. Main session picks up the escalated tasks

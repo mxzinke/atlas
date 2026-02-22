@@ -91,11 +91,9 @@ trigger_create(
 # Edit /atlas/workspace/crontab and add BEFORE the marker line:
 * * * * *  python3 /atlas/app/integrations/signal/signal-addon.py poll --once 2>&1 >> /atlas/logs/signal.log
 
-# Step 3: Add reply delivery to crontab:
-* * * * *  /atlas/app/integrations/reply-delivery.sh --once 2>&1 >> /atlas/logs/reply-delivery.log
 ```
 
-**Email setup (3 steps Claude performs):**
+**Email setup (2 steps Claude performs):**
 
 ```bash
 # Step 1: Create trigger
@@ -109,9 +107,6 @@ trigger_create(
 
 # Step 2: Add poll to crontab:
 */2 * * * *  python3 /atlas/app/integrations/email/email-addon.py poll --once 2>&1 >> /atlas/logs/email.log
-
-# Step 3: Add reply delivery to crontab (if not already there):
-* * * * *  /atlas/app/integrations/reply-delivery.sh --once 2>&1 >> /atlas/logs/reply-delivery.log
 ```
 
 **Important**: Cron entries go **above** the `# === AUTO-GENERATED TRIGGERS` marker in `workspace/crontab`. sync-crontab.ts preserves everything above the marker.
@@ -215,7 +210,7 @@ For webhooks, also set:
 ## Escalation Pattern
 
 Trigger sessions act as filters:
-1. **Simple events**: Handle directly with reply_send or MCP actions
+1. **Simple events**: Handle directly with CLI tools (signal-addon.py / email-addon.py) or MCP actions
 2. **Complex events**: Escalate to main session via inbox_write (one or more tasks)
 
 ```
