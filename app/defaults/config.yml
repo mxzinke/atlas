@@ -1,0 +1,44 @@
+# Atlas Configuration
+# Editable by Claude and via the Web-UI
+
+models:
+  main: claude-sonnet-4-6       # Main session model (claude -p --model)
+  subagent_review: claude-sonnet-4-6  # SubagentStop quality gate (prompt hook)
+  hooks: claude-haiku-4-5       # Default model for other prompt/agent hooks
+
+memory:
+  qmd_search_mode: search     # search (BM25) | vsearch (vector) | query (hybrid)
+  qmd_max_results: 6
+  load_memory_md: true
+  load_journal_days: 2
+
+# Signal integration (requires signal-cli)
+# Install: apt-get install -y signal-cli  (in user-extensions.sh)
+# Register: signal-cli -a +YOUR_NUMBER register && signal-cli -a +YOUR_NUMBER verify CODE
+signal:
+  number: ""                   # Your Signal phone number (e.g. "+491701234567")
+  history_turns: 20
+  whitelist: []                # Empty = accept all, or list of allowed numbers
+
+# Email integration (IMAP + SMTP)
+email:
+  imap_host: ""                # e.g. "imap.gmail.com"
+  imap_port: 993
+  smtp_host: ""                # e.g. "smtp.gmail.com"
+  smtp_port: 587
+  username: ""                 # e.g. "atlas@example.com"
+  password_file: "/atlas/workspace/secrets/email-password"
+  folder: "INBOX"
+  whitelist: []                # Empty = accept all, or list of senders/domains
+  mark_read: true              # Mark fetched emails as read on server
+
+daily_cleanup:
+  enabled: true
+  max_turns: 5
+
+team:
+  # No limit - Claude has full control
+
+web_ui:
+  port: 8080
+  bind: "127.0.0.1"

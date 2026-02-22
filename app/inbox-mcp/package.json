@@ -1,0 +1,16 @@
+{
+  "name": "@atlas/inbox-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^11.8.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12"
+  }
+}
