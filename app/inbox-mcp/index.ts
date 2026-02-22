@@ -18,7 +18,7 @@ const server = new McpServer({
 // --- Tool: inbox_list ---
 server.tool(
   "inbox_list",
-  "Liste ausstehende Nachrichten aus der Inbox",
+  "List pending messages from the inbox",
   {
     status: z.string().optional().default("pending").describe("Filter by status: pending, processing, done"),
     limit: z.number().optional().default(20).describe("Max number of messages to return"),
@@ -47,7 +47,7 @@ server.tool(
 // --- Tool: inbox_mark ---
 server.tool(
   "inbox_mark",
-  "Markiere eine Nachricht als bearbeitet",
+  "Mark a message as processed",
   {
     message_id: z.number().describe("ID of the message to update"),
     status: z.enum(["processing", "done"]).describe("New status"),
@@ -69,7 +69,7 @@ server.tool(
 // --- Tool: inbox_write ---
 server.tool(
   "inbox_write",
-  "Schreibe eine neue Nachricht in die Inbox",
+  "Write a new message to the inbox",
   {
     channel: z.string().describe("Channel: signal, email, web, internal"),
     sender: z.string().optional().describe("Sender identifier"),
@@ -98,7 +98,7 @@ server.tool(
 // --- Tool: reply_send ---
 server.tool(
   "reply_send",
-  "Sende eine Antwort über den ursprünglichen Kanal",
+  "Send a reply via the original channel",
   {
     message_id: z.number().describe("ID of the original message to reply to"),
     content: z.string().describe("Reply content"),
@@ -168,7 +168,7 @@ server.tool(
 // --- Tool: inbox_stats ---
 server.tool(
   "inbox_stats",
-  "Inbox-Statistiken abrufen",
+  "Get inbox statistics",
   {},
   async () => {
     const db = getDb();
@@ -198,7 +198,7 @@ server.tool(
 // --- Tool: trigger_list ---
 server.tool(
   "trigger_list",
-  "Liste alle konfigurierten Trigger (cron, webhook, manual)",
+  "List all configured triggers (cron, webhook, manual)",
   {
     type: z.string().optional().describe("Filter by type: cron, webhook, manual"),
   },
@@ -221,7 +221,7 @@ server.tool(
 // --- Tool: trigger_create ---
 server.tool(
   "trigger_create",
-  "Erstelle einen neuen Trigger (cron, webhook oder manual). Bei Webhooks wird die URL: /api/webhook/<name>",
+  "Create a new trigger (cron, webhook, or manual). Webhooks get URL: /api/webhook/<name>",
   {
     name: z.string().describe("Unique trigger slug (e.g. 'github-check', 'daily-report')"),
     type: z.enum(["cron", "webhook", "manual"]).describe("Trigger type"),
@@ -271,7 +271,7 @@ server.tool(
 // --- Tool: trigger_update ---
 server.tool(
   "trigger_update",
-  "Aktualisiere einen bestehenden Trigger",
+  "Update an existing trigger",
   {
     name: z.string().describe("Trigger name to update"),
     description: z.string().optional().describe("New description"),
@@ -323,7 +323,7 @@ server.tool(
 // --- Tool: trigger_delete ---
 server.tool(
   "trigger_delete",
-  "Lösche einen Trigger",
+  "Delete a trigger",
   {
     name: z.string().describe("Trigger name to delete"),
   },

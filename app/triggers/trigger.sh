@@ -36,7 +36,7 @@ if [ -z "$PROMPT" ]; then
   if [ -f "$PROMPT_FILE" ]; then
     PROMPT=$(cat "$PROMPT_FILE")
   else
-    PROMPT="Trigger '${TRIGGER_NAME}' wurde ausgelöst."
+    PROMPT="Trigger '${TRIGGER_NAME}' was fired."
   fi
 fi
 

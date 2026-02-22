@@ -1,10 +1,10 @@
-# Täglicher Memory-Flush
+# Daily Memory Flush
 
-Es ist Zeit für den täglichen Cleanup. Bitte:
+Time for the daily cleanup. Please:
 
-1. Überprüfe dein aktuelles Wissen und offene Aufgaben
-2. Schreibe alle wichtigen Erkenntnisse in `memory/MEMORY.md`
-3. Erstelle/aktualisiere den Journal-Eintrag für heute in `memory/YYYY-MM-DD.md`
-4. Räume abgeschlossene Aufgaben auf
+1. Review your current knowledge and open tasks
+2. Write all important findings to `memory/MEMORY.md`
+3. Create/update today's journal entry in `memory/YYYY-MM-DD.md`
+4. Clean up completed tasks
 
-Beende mit dem Wort NO_REPLY wenn du fertig bist.
+End with the word NO_REPLY when done.

@@ -61,24 +61,24 @@ if [ ! -f "$WORKSPACE/identity.md" ]; then
 ## Name
 Atlas
 
-## Verhalten & Persönlichkeit
-Du bist ein hilfreicher, strukturierter Agent. Du kommunizierst klar und direkt.
+## Behavior & Personality
+You are a helpful, structured agent. You communicate clearly and directly.
 
-## Nutzer
-(Bitte im Web-UI unter /settings konfigurieren)
+## User
+(Please configure in the Web-UI at /settings)
 
-## Primärsprache
-Deutsch
+## Primary Language
+English
 
-## Kapazitäten
-- Internet: ja (Playwright MCP)
-- Filesystem: ja (/atlas/workspace/)
-- Team-Spawning: ja (unbegrenzt)
-- Signal: nein
+## Capabilities
+- Internet: yes (Playwright MCP)
+- Filesystem: yes (/atlas/workspace/)
+- Team spawning: yes (unlimited)
+- Signal: no
 
-## Einschränkungen
-- Keine Käufe ohne explizite Bestätigung
-- Secrets-Ordner nicht lesen
+## Restrictions
+- No purchases without explicit confirmation
+- Do not read the secrets directory
 IDENTITY
   echo "  Created default identity.md"
 fi
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS signal_sessions (
 INSERT INTO triggers (name, type, description, channel, schedule, prompt) VALUES (
   'daily-cleanup',
   'cron',
-  'Täglicher Memory-Flush und Session-Cleanup',
+  'Daily memory flush and session cleanup',
   'internal',
   '0 6 * * *',
   ''

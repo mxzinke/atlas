@@ -1,62 +1,65 @@
 # Atlas – Autonomous Agent System
 
-## Projektübersicht
+## Project Overview
 
-Atlas ist ein containerisiertes Autonomous-Agent-System basierend auf Claude Code. Es nutzt ein Inbox-basiertes Kommunikationsmodell mit event-driven Wakeup (kein Polling).
+Atlas is a containerized autonomous agent system built on Claude Code. It uses an inbox-based communication model with event-driven wakeup (no polling).
 
-## Architektur
+## Architecture
 
 ```
 /atlas/app/       (read-only)  – Core: Hooks, Inbox-MCP, Web-UI, Watcher
 /atlas/workspace/ (read-write) – Memory, Identity, Config, Skills, Triggers
-/root/            (read-write) – Home: ~/.claude/, ~/.ssh/, git-Config
+/root/            (read-write) – Home: ~/.claude/, ~/.ssh/, git config
 ```
 
-### Kernkomponenten
-- **Inbox-MCP** (`app/inbox-mcp/`): SQLite-basierter MCP-Server für Nachrichtenverwaltung
-- **Web-UI** (`app/web-ui/`): Hono.js + HTMX Dashboard auf Port 3000 (nginx Proxy: 8080)
-- **Watcher** (`app/watcher.sh`): inotifywait-basierter Event-Watcher, weckt Claude bei neuen Nachrichten
+### Core Components
+- **Inbox-MCP** (`app/inbox-mcp/`): SQLite-based MCP server for message and trigger management
+- **Web-UI** (`app/web-ui/`): Hono.js + HTMX dashboard on port 3000 (nginx proxy: 8080)
+- **Watcher** (`app/watcher.sh`): inotifywait-based event watcher, wakes Claude on new messages
 - **Hooks** (`app/hooks/`): SessionStart, Stop, PreCompact, SubagentStop
-- **QMD**: Memory-Suche (BM25/Vektor/Hybrid) als HTTP-MCP-Daemon
+- **Triggers** (`app/triggers/`): Generic trigger runner + crontab sync
+- **QMD**: Memory search (BM25/vector/hybrid) as HTTP MCP daemon
 
-### Datenfluss
-1. Trigger empfängt Nachricht → schreibt in Inbox-DB → touch `.wake`
-2. Watcher erkennt `.wake` → resumt Claude Session
-3. Stop-Hook prüft Inbox → liefert nächste Nachricht oder lässt Claude schlafen
-4. Memory wird als Markdown geschrieben, QMD indexiert automatisch
+### Data Flow
+1. Trigger receives event → writes to inbox DB → touches `.wake`
+2. Watcher detects `.wake` → resumes Claude session
+3. Stop hook checks inbox → delivers next message or lets Claude sleep
+4. Memory is written as Markdown, QMD indexes automatically
 
-## Tech-Stack
-- **Runtime**: Bun (TypeScript, kein Build-Step)
+## Tech Stack
+- **Runtime**: Bun (TypeScript, no build step)
 - **Database**: SQLite (better-sqlite3)
-- **Web**: Hono.js + HTMX (SSR, kein SPA)
+- **Web**: Hono.js + HTMX (SSR, no SPA)
 - **Process Manager**: supervisord
 - **Cron**: supercronic
 - **Container**: Ubuntu 24.04
 
-## Verzeichnisstruktur
+## Directory Structure
 
-| Pfad | Beschreibung |
+| Path | Description |
 |------|-------------|
-| `app/hooks/session-start.sh` | Lädt Identity + Memory beim Session-Start |
-| `app/hooks/stop.sh` | Inbox-Check nach jeder Antwort, Schlaf-Orchestrierung |
-| `app/hooks/pre-compact-auto.sh` | Memory-Flush vor Context-Compaction |
-| `app/hooks/pre-compact-manual.sh` | Memory-Flush bei manueller Compaction |
-| `app/hooks/subagent-stop.sh` | Quality-Gate für Team-Ergebnisse |
-| `app/inbox-mcp/` | Inbox-MCP Server (TypeScript, stdio) |
-| `app/web-ui/` | Web-Dashboard (Hono + HTMX) |
-| `app/watcher.sh` | inotifywait Event-Watcher |
-| `app/init.sh` | Container-Startup-Script |
-| `app/triggers/cron/` | Cron-Trigger Scripts |
-| `app/prompts/` | Prompt-Templates |
-| `app/defaults/` | Default config.yml und crontab |
+| `app/hooks/session-start.sh` | Loads identity + memory on session start |
+| `app/hooks/stop.sh` | Inbox check after each response, sleep orchestration |
+| `app/hooks/pre-compact-auto.sh` | Memory flush before context compaction |
+| `app/hooks/pre-compact-manual.sh` | Memory flush on manual compaction |
+| `app/hooks/subagent-stop.sh` | Quality gate for team member results |
+| `app/inbox-mcp/` | Inbox-MCP server (TypeScript, stdio) |
+| `app/web-ui/` | Web dashboard (Hono + HTMX) |
+| `app/watcher.sh` | inotifywait event watcher |
+| `app/init.sh` | Container startup script |
+| `app/triggers/trigger.sh` | Generic trigger runner (cron/manual) |
+| `app/triggers/sync-crontab.ts` | Auto-generates crontab from DB triggers |
+| `app/triggers/cron/` | Cron-specific scripts (daily-cleanup, event) |
+| `app/prompts/` | Prompt templates |
+| `app/defaults/` | Default config.yml and crontab |
 
 ## Denylist
 
-Die folgenden Pfade dürfen NICHT gelesen oder modifiziert werden:
-- `/atlas/workspace/secrets/` – API-Keys, Credentials
-- `/atlas/app/` – Read-only Core-Code (im Container)
+The following paths must NOT be read or modified:
+- `/atlas/workspace/secrets/` – API keys, credentials
+- `/atlas/app/` – Read-only core code (inside the container)
 
-## Entwicklung
+## Development
 
 ```bash
 # Build
@@ -68,14 +71,14 @@ docker compose up -d
 # Logs
 docker compose logs -f
 
-# OAuth Login (einmalig)
+# OAuth login (one-time)
 docker run -it --rm -v $(pwd)/atlas-home:/root atlas claude login
 ```
 
-## MCP-Server
+## MCP Servers
 
 ### Inbox-MCP (stdio)
-Tools: `inbox_list`, `inbox_mark`, `inbox_write`, `reply_send`, `inbox_stats`
+Tools: `inbox_list`, `inbox_mark`, `inbox_write`, `reply_send`, `inbox_stats`, `trigger_list`, `trigger_create`, `trigger_update`, `trigger_delete`
 
-### QMD-MCP (HTTP, Port 8181)
+### QMD-MCP (HTTP, port 8181)
 Tools: `qmd_search`, `qmd_vector_search`, `qmd_deep_search`, `qmd_get`, `qmd_multi_get`, `qmd_status`

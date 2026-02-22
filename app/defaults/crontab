@@ -1,6 +1,6 @@
 # Atlas Crontab (supercronic)
-# Zeitzone via TZ env-Variable im Container
+# Timezone via TZ env variable in the container
 
-# Täglicher Session-Cleanup um 06:00 (spezial: nutzt --max-turns und Session-Resume)
+# Daily session cleanup at 06:00 (special: uses --max-turns and session resume)
 0 6 * * *  /atlas/app/triggers/cron/daily-cleanup.sh
 

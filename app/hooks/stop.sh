@@ -41,11 +41,11 @@ if [ -f "$DB" ]; then
     NEXT_MSG=$(sqlite3 -json "$DB" "SELECT id, channel, sender, content, created_at FROM messages WHERE status='pending' ORDER BY created_at ASC LIMIT 1;" 2>/dev/null || echo "")
 
     if [ -n "$NEXT_MSG" ]; then
-      echo "--- NEUE INBOX-NACHRICHT ---"
+      echo "--- NEW INBOX MESSAGE ---"
       echo "$NEXT_MSG"
       echo ""
-      echo "Verarbeite diese Nachricht. Nutze inbox_mark um sie als 'processing' zu markieren, bearbeite sie, und nutze dann reply_send für die Antwort."
-      echo "Noch $((PENDING - 1)) weitere Nachrichten in der Inbox."
+      echo "Process this message. Use inbox_mark to set status to 'processing', handle it, then use reply_send to respond."
+      echo "$((PENDING - 1)) more messages pending in the inbox."
       # Exit 1 = continue processing (don't sleep)
       exit 1
     fi
@@ -53,5 +53,5 @@ if [ -f "$DB" ]; then
 fi
 
 # No pending messages - write journal reminder and sleep
-echo "Keine ausstehenden Nachrichten. Schreibe ein kurzes Journal-Entry in memory/$(date +%Y-%m-%d).md falls du heute etwas Relevantes erledigt hast."
+echo "No pending messages. Write a short journal entry to memory/$(date +%Y-%m-%d).md if you accomplished something relevant today."
 exit 0

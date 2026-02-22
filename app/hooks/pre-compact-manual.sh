@@ -5,18 +5,18 @@ set -euo pipefail
 TODAY=$(date +%Y-%m-%d)
 
 cat << 'EOF'
-=== MANUELLE COMPACTION ANGEFORDERT ===
+=== MANUAL COMPACTION REQUESTED ===
 
-Der Nutzer hat manuell eine Context-Compaction ausgelöst.
+The user has manually triggered a context compaction.
 
-Konsolidiere ALLE wichtigen Erkenntnisse aus dieser Session:
+Consolidate ALL important findings from this session:
 
-1. Schreibe dauerhafte Fakten, Entscheidungen und Präferenzen in memory/MEMORY.md
-2. Schreibe Task-Ergebnisse und Kontext in memory/JOURNAL_DATE.md
-3. Falls ein Projekt-Thema relevant ist, erstelle/aktualisiere memory/projects/
+1. Write lasting facts, decisions, and preferences to memory/MEMORY.md
+2. Write task results and context to memory/JOURNAL_DATE.md
+3. If a project topic is relevant, create/update memory/projects/
 
-Sei gründlich - nach der Compaction geht der detaillierte Context verloren.
+Be thorough - detailed context will be lost after compaction.
 EOF
 
 echo ""
-echo "(Journal-Datei: memory/${TODAY}.md)"
+echo "(Journal file: memory/${TODAY}.md)"

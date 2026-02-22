@@ -6,19 +6,19 @@ set -euo pipefail
 # Claude Code passes subagent context through the hook environment
 
 cat << 'EOF'
-=== SUBAGENT ERGEBNIS-BEWERTUNG ===
+=== SUBAGENT RESULT REVIEW ===
 
-Ein Team-Mitglied hat seine Aufgabe abgeschlossen. Prüfe:
+A team member has completed their task. Review:
 
-1. Wurde die ursprüngliche Aufgabe vollständig erledigt?
-2. Gibt es offensichtliche Fehler oder Lücken im Ergebnis?
-3. Muss nachgebessert werden oder ist das Ergebnis akzeptabel?
+1. Was the original task fully completed?
+2. Are there obvious errors or gaps in the result?
+3. Does it need rework or is the result acceptable?
 
-Falls das Ergebnis unvollständig oder fehlerhaft ist:
-- Beschreibe was fehlt
-- Entscheide ob der Subagent neu beauftragt werden soll
+If the result is incomplete or flawed:
+- Describe what is missing
+- Decide whether to re-assign the subagent
 
-Falls das Ergebnis gut ist:
-- Integriere es in den Hauptkontext
-- Markiere die zugehörige Aufgabe als erledigt
+If the result is good:
+- Integrate it into the main context
+- Mark the related task as done
 EOF

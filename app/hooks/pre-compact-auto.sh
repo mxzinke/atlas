@@ -5,22 +5,21 @@ set -euo pipefail
 TODAY=$(date +%Y-%m-%d)
 
 cat << 'EOF'
-=== CONTEXT COMPACTION STEHT BEVOR ===
+=== CONTEXT COMPACTION IMMINENT ===
 
-Bevor der Context compacted wird, konsolidiere wichtige Erkenntnisse:
+Before the context is compacted, consolidate important findings:
 
-1. Schreibe dauerhafte Fakten, Entscheidungen und Präferenzen in memory/MEMORY.md
-2. Schreibe Task-Ergebnisse und Tageskontext in memory/JOURNAL_DATE.md
-3. Falls ein Projekt-Thema relevant ist, erstelle/aktualisiere eine Datei in memory/projects/
+1. Write lasting facts, decisions, and preferences to memory/MEMORY.md
+2. Write task results and daily context to memory/JOURNAL_DATE.md
+3. If a project topic is relevant, create/update a file in memory/projects/
 
-Wichtig:
-- MEMORY.md ist für langfristige, zeitlose Informationen
-- Das Journal ist für tagesaktuelle Details (append-only)
-- Schreibe NUR was wirklich relevant ist, kein Noise
+Important:
+- MEMORY.md is for long-term, timeless information
+- The journal is for daily details (append-only)
+- Only write what is truly relevant, no noise
 
-Führe den Memory-Flush jetzt durch.
+Perform the memory flush now.
 EOF
 
-# Replace placeholder with actual date
 echo ""
-echo "(Journal-Datei: memory/${TODAY}.md)"
+echo "(Journal file: memory/${TODAY}.md)"

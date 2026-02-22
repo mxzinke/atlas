@@ -28,10 +28,10 @@ inotifywait -m "$WAKE_FILE" -e create,modify,attrib | while read; do
 
   if [ -n "$SESSION_ID" ]; then
     echo "[$(date)] Resuming session: $SESSION_ID"
-    claude -p --resume "$SESSION_ID" "Du hast neue Nachrichten." 2>&1 | tee -a /atlas/logs/session.log || true
+    claude -p --resume "$SESSION_ID" "You have new messages." 2>&1 | tee -a /atlas/logs/session.log || true
   else
     echo "[$(date)] Starting new session"
-    claude -p "Du hast neue Nachrichten." 2>&1 | tee -a /atlas/logs/session.log || true
+    claude -p "You have new messages." 2>&1 | tee -a /atlas/logs/session.log || true
   fi
 
   rm -f "$LOCK_FILE"

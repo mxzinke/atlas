@@ -1,5 +1,5 @@
 # Atlas Configuration
-# Editierbar durch Claude und über das Web-UI
+# Editable by Claude and via the Web-UI
 
 memory:
   qmd_search_mode: search     # search (BM25) | vsearch (vector) | query (hybrid)
@@ -16,7 +16,7 @@ daily_cleanup:
   max_turns: 5
 
 team:
-  # Keine Obergrenze - Claude hat volle Kontrolle
+  # No limit - Claude has full control
 
 web_ui:
   port: 8080

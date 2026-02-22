@@ -476,7 +476,7 @@ app.post("/triggers/:id/run", (c) => {
   const t = db.prepare("SELECT * FROM triggers WHERE id = ?").get(id) as any;
   if (!t) return c.html('<div class="text-muted">Not found</div>');
 
-  const prompt = t.prompt || `Trigger '${t.name}' wurde manuell ausgelöst.`;
+  const prompt = t.prompt || `Trigger '${t.name}' was fired manually.`;
 
   db.prepare(
     "INSERT INTO messages (channel, sender, content) VALUES (?, ?, ?)"
