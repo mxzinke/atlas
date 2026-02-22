@@ -17,9 +17,13 @@ To reply:
 
 This ensures the reply is delivered back to the original sender via the correct channel with proper threading (email In-Reply-To headers, Signal contact routing).
 
+## Memory
+
+Write session notes and insights to `memory/` files as needed. Use `qmd_search` to check what's already known.
+
 ## Rules
 
-- **Read-only**: Do not modify workspace files directly. Use MCPs for actions.
+- **No code changes**: Do not modify code or workspace config files. Memory files are OK.
 - **Be decisive**: Either handle it or escalate it. Don't leave events unprocessed.
 - **Filter noise**: Not every event needs main session attention. Only escalate what truly needs it.
 - **Multi-task escalation**: If an event needs multiple independent actions, write separate inbox_write calls for each task — one per concern.

@@ -13,12 +13,13 @@ DB="$WORKSPACE/inbox/atlas.db"
 if [ -n "${ATLAS_TRIGGER:-}" ]; then
   echo "=== TRIGGER SESSION: ${ATLAS_TRIGGER} ==="
   echo ""
-  echo "You are running as a trigger session (read-only). Your role:"
+  echo "You are running as a trigger session. Your role:"
   echo "- Process the event described in the prompt"
   echo "- Handle simple tasks directly (reply_send, MCP actions)"
-  echo "- Escalate complex or write-heavy tasks to the main session via inbox_write"
-  echo "- You can use qmd_search for research and inbox tools for communication"
-  echo "- Do NOT modify workspace files directly"
+  echo "- Escalate complex tasks to the main session via inbox_write"
+  echo "- Use qmd_search for research and inbox tools for communication"
+  echo "- Write conversation notes and insights to memory/ files as needed"
+  echo "- Do NOT modify code or workspace config files"
   echo ""
 
   # Load identity (triggers need to know who they are)

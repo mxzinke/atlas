@@ -1,8 +1,61 @@
 #!/bin/bash
-# PreCompact (manual) Hook: Same as auto but with user context
+# PreCompact (manual) Hook: Same as auto but with emphasis on thoroughness
+# For trigger sessions: uses channel-specific templates
+# For main session: uses generic memory flush instructions
 set -euo pipefail
 
 TODAY=$(date +%Y-%m-%d)
+PROMPT_DIR="/atlas/app/prompts"
+
+# --- Trigger session: channel-specific compaction ---
+if [ -n "${ATLAS_TRIGGER:-}" ]; then
+  CHANNEL="${ATLAS_TRIGGER_CHANNEL:-internal}"
+  TRIGGER_NAME="$ATLAS_TRIGGER"
+
+  echo "=== MANUAL COMPACTION REQUESTED ==="
+  echo ""
+  echo "Be thorough — detailed context will be lost after compaction."
+  echo ""
+
+  # Phase 1: Pre-compaction — save state to memory
+  PRE_COMPACT=""
+  for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-pre-compact.md" "$PROMPT_DIR/trigger-session-pre-compact.md"; do
+    if [ -f "$candidate" ]; then
+      PRE_COMPACT="$candidate"
+      break
+    fi
+  done
+
+  if [ -n "$PRE_COMPACT" ]; then
+    sed -e "s|{{trigger_name}}|${TRIGGER_NAME}|g" \
+        -e "s|{{channel}}|${CHANNEL}|g" \
+        -e "s|{{today}}|${TODAY}|g" \
+        "$PRE_COMPACT"
+  fi
+
+  echo ""
+  echo "(Journal file: memory/${TODAY}.md)"
+  echo ""
+
+  # Phase 2: Post-compaction context
+  COMPACT=""
+  for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-compact.md" "$PROMPT_DIR/trigger-session-compact.md"; do
+    if [ -f "$candidate" ]; then
+      COMPACT="$candidate"
+      break
+    fi
+  done
+
+  if [ -n "$COMPACT" ]; then
+    sed -e "s|{{trigger_name}}|${TRIGGER_NAME}|g" \
+        -e "s|{{channel}}|${CHANNEL}|g" \
+        "$COMPACT"
+  fi
+
+  exit 0
+fi
+
+# --- Main session: generic memory flush ---
 
 cat << 'EOF'
 === MANUAL COMPACTION REQUESTED ===

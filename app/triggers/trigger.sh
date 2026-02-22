@@ -76,11 +76,28 @@ if [ "$SESSION_MODE" = "persistent" ]; then
 
     if [ -S "$SOCKET" ]; then
       # Session is running — inject message directly via IPC socket
-      INJECT_MSG="New message arrived:
+      # Load channel-specific inject template
+      INJECT_TEMPLATE=""
+      for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-inject.md" "$PROMPT_DIR/trigger-session-inject.md"; do
+        if [ -f "$candidate" ]; then
+          INJECT_TEMPLATE="$candidate"
+          break
+        fi
+      done
+
+      if [ -n "$INJECT_TEMPLATE" ]; then
+        INJECT_MSG=$(sed -e "s|{{trigger_name}}|${TRIGGER_NAME}|g" \
+                         -e "s|{{channel}}|${CHANNEL}|g" \
+                         -e "s|{{sender}}|${SESSION_KEY}|g" \
+                         -e "s|{{payload}}|${PAYLOAD:-$PROMPT}|g" \
+                         "$INJECT_TEMPLATE")
+      else
+        INJECT_MSG="New message arrived:
 
 ${PAYLOAD:-$PROMPT}
 
 Process this message using inbox_mark and reply_send."
+      fi
 
       if echo "$INJECT_MSG" | python3 -c "
 import socket, json, sys

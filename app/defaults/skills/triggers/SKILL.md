@@ -116,21 +116,84 @@ trigger_create(
 
 **Important**: Cron entries go **above** the `# === AUTO-GENERATED TRIGGERS` marker in `workspace/crontab`. sync-crontab.ts preserves everything above the marker.
 
-## Channel-Specific Prompts
+## Prompt Lifecycle
 
-trigger.sh automatically selects the right prompt template based on channel:
+A persistent trigger session goes through three prompt phases. Each has channel-specific templates (`signal`, `email`, fallback `session`):
 
-| Channel | Prompt Template | Style |
-|---------|----------------|-------|
-| `signal` | `app/prompts/trigger-signal.md` | Conversational, short, mobile-friendly |
-| `email` | `app/prompts/trigger-email.md` | Professional, structured, with greeting/sign-off |
-| *(other)* | `app/prompts/trigger-session.md` | Generic filter/escalation |
+### 1. Initial Spawn (`trigger-{channel}.md`)
 
-The trigger's `prompt` field (with `{{payload}}`) is appended after the system prompt template. Claude does **not** need to include reply instructions in the trigger prompt — the template handles that.
+When a new session is created (no existing session for this key):
+
+```
+[session-start.sh hook output: identity + trigger role]
+[trigger-{channel}.md: full role, reply flow, style, tools, rules]
+---
+[trigger prompt field with {{payload}} replaced]
+```
+
+| Channel | Template | Style |
+|---------|----------|-------|
+| `signal` | `trigger-signal.md` | Conversational, short, mobile-friendly |
+| `email` | `trigger-email.md` | Professional, structured, greeting/sign-off |
+| *(other)* | `trigger-session.md` | Generic filter/escalation |
+
+### 2. IPC Injection (`trigger-{channel}-inject.md`)
+
+When a message arrives while the session is already running (IPC socket alive):
+
+| Channel | Template | Content |
+|---------|----------|---------|
+| `signal` | `trigger-signal-inject.md` | Sender, payload, short reply reminder |
+| `email` | `trigger-email-inject.md` | Payload, professional reply reminder |
+| *(other)* | `trigger-session-inject.md` | Payload, generic process instructions |
+
+The inject template is a short context prompt — the session already has its role from the initial spawn. The key point: **the user is waiting for a reply**.
+
+### 3. Pre/Post-Compaction (`trigger-{channel}-pre-compact.md` + `trigger-{channel}-compact.md`)
+
+When context approaches the limit, the PreCompact hook fires and outputs two phases:
+
+**Pre-Compaction** (`trigger-{channel}-pre-compact.md`):
+- "Save conversation state, notes, and pending work to memory NOW"
+- Channel-specific: Signal saves contact notes, Email saves thread summaries
+
+**Post-Compaction** (`trigger-{channel}-compact.md`):
+- Re-establishes role, tools, reply flow, and style rules
+- Marked `=== POST-COMPACTION CONTEXT — PRESERVE THIS ===` for compaction survival
+- Tells Claude to check `memory/` and `qmd_search` to recover lost context
+
+Both are output sequentially by the hook. Claude acts on pre-compact (saves to memory), then compaction preserves the post-compact context as best it can.
+
+### Template File Overview
+
+```
+app/prompts/
+├── trigger-signal.md              # Initial: Signal session setup
+├── trigger-signal-inject.md       # Inject: new Signal message arrived
+├── trigger-signal-pre-compact.md  # Pre-compact: save Signal conversation state
+├── trigger-signal-compact.md      # Post-compact: re-establish Signal context
+├── trigger-email.md               # Initial: Email session setup
+├── trigger-email-inject.md        # Inject: new email arrived
+├── trigger-email-pre-compact.md   # Pre-compact: save email correspondence state
+├── trigger-email-compact.md       # Post-compact: re-establish Email context
+├── trigger-session.md             # Initial: generic fallback
+├── trigger-session-inject.md      # Inject: generic fallback
+├── trigger-session-pre-compact.md # Pre-compact: generic fallback
+└── trigger-session-compact.md     # Post-compact: generic fallback
+```
+
+### Adding a New Channel
+
+To add a new channel (e.g., `telegram`):
+1. Create `trigger-telegram.md` (initial session prompt)
+2. Create `trigger-telegram-inject.md` (IPC injection template)
+3. Create `trigger-telegram-pre-compact.md` (pre-compaction memory flush)
+4. Create `trigger-telegram-compact.md` (post-compaction context)
+5. Set `channel: "telegram"` in `trigger_create` — trigger.sh picks the templates automatically
 
 ## IPC Socket Injection
 
-When a message arrives while a trigger session is already running for the same key, trigger.sh injects it directly via Claude Code's IPC socket (`/tmp/claudec-<session_id>.sock`). The message arrives during the run — no stop hook, no restart.
+When a message arrives while a trigger session is already running for the same key, trigger.sh injects it directly via Claude Code's IPC socket (`/tmp/claudec-<session_id>.sock`). The inject template (see above) is used instead of a hardcoded message. No new process is spawned.
 
 ## Creating a Trigger
 

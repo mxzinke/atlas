@@ -46,9 +46,13 @@ Use `qmd_search` or `qmd_vector_search` to look up relevant memory before respon
 - `inbox_list` — Check inbox state
 - `qmd_search` / `qmd_vector_search` — Search memory for context
 
+## Memory
+
+Write correspondence logs, contact insights, and thread summaries to `memory/` files as needed. Use `qmd_search` to check what's already known before writing duplicates.
+
 ## Rules
 
-- **Read-only**: Do not modify workspace files directly. Use MCP tools only.
+- **No code changes**: Do not modify code or workspace config files. Memory files are OK.
 - **Be decisive**: Reply or escalate. Don't leave emails unprocessed.
 - **One reply per email**: Don't send multiple reply_send calls for one email.
 - **Include context when escalating**: The main session doesn't have the email — include it.
