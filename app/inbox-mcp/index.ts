@@ -230,8 +230,9 @@ server.tool(
     schedule: z.string().optional().describe("Cron expression for type=cron (e.g. '0 * * * *')"),
     webhook_secret: z.string().optional().describe("Secret for webhook validation (X-Webhook-Secret header)"),
     prompt: z.string().optional().default("").describe("Prompt template. Use {{payload}} for webhook data"),
+    session_mode: z.enum(["ephemeral", "persistent"]).optional().default("ephemeral").describe("Session mode: ephemeral (new session per run) or persistent (resume across runs)"),
   },
-  async ({ name, type, description, channel, schedule, webhook_secret, prompt }) => {
+  async ({ name, type, description, channel, schedule, webhook_secret, prompt, session_mode }) => {
     const db = getDb();
 
     if (type === "cron" && !schedule) {
@@ -242,9 +243,9 @@ server.tool(
 
     try {
       db.prepare(
-        `INSERT INTO triggers (name, type, description, channel, schedule, webhook_secret, prompt)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(name, type, description, channel, schedule ?? null, webhook_secret ?? null, prompt);
+        `INSERT INTO triggers (name, type, description, channel, schedule, webhook_secret, prompt, session_mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(name, type, description, channel, schedule ?? null, webhook_secret ?? null, prompt, session_mode);
     } catch (err: any) {
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }],
@@ -279,9 +280,10 @@ server.tool(
     schedule: z.string().optional().describe("New cron schedule"),
     webhook_secret: z.string().optional().describe("New webhook secret"),
     prompt: z.string().optional().describe("New prompt template"),
+    session_mode: z.enum(["ephemeral", "persistent"]).optional().describe("Session mode: ephemeral or persistent"),
     enabled: z.boolean().optional().describe("Enable or disable trigger"),
   },
-  async ({ name, description, channel, schedule, webhook_secret, prompt, enabled }) => {
+  async ({ name, description, channel, schedule, webhook_secret, prompt, session_mode, enabled }) => {
     const db = getDb();
 
     const existing = db.prepare("SELECT * FROM triggers WHERE name = ?").get(name) as any;
@@ -299,6 +301,7 @@ server.tool(
     if (schedule !== undefined) { updates.push("schedule = ?"); params.push(schedule); }
     if (webhook_secret !== undefined) { updates.push("webhook_secret = ?"); params.push(webhook_secret); }
     if (prompt !== undefined) { updates.push("prompt = ?"); params.push(prompt); }
+    if (session_mode !== undefined) { updates.push("session_mode = ?"); params.push(session_mode); }
     if (enabled !== undefined) { updates.push("enabled = ?"); params.push(enabled ? 1 : 0); }
 
     if (updates.length === 0) {

@@ -1,14 +1,61 @@
 # Triggers
 
-Triggers are the event system that wakes Atlas. Every trigger, regardless of type, follows the same pattern: write a message to the inbox, touch the `.wake` file, and Claude processes it.
+Triggers are autonomous agent sessions that process events independently. Each trigger spawns its own Claude session, acts as a filter, and only escalates to the main session when needed.
+
+## Architecture
+
+```
+Event arrives (cron / webhook / manual)
+         │
+         ▼
+┌─────────────────────────────┐
+│  trigger.sh <trigger-name>  │
+│  Spawns own Claude session  │
+│  (read-only, MCP access)    │
+└──────────┬──────────────────┘
+           │
+     ┌─────┴──────┐
+     │  Can handle │
+     │  itself?    │
+     └─────┬──────┘
+       Yes │        No
+       ┌───┘        └───┐
+       ▼                ▼
+┌──────────────┐  ┌──────────────────────┐
+│ Respond      │  │ inbox_write() to     │
+│ directly     │  │ main session (1..N   │
+│ (reply_send, │  │ tasks) → .wake       │
+│  MCP action) │  │ → watcher → main     │
+└──────────────┘  └──────────────────────┘
+```
+
+### Trigger Sessions vs Main Session
+
+| | Trigger Session | Main Session |
+|---|---|---|
+| **Access** | Read-only workspace | Read/write workspace |
+| **Role** | Filter, triage, quick response | Complex tasks, write operations |
+| **MCPs** | inbox, qmd (for research/actions) | inbox, qmd (full access) |
+| **Spawned by** | `trigger.sh` per event | `watcher.sh` on `.wake` |
+| **Session persistence** | Configurable per trigger | Always persistent |
+
+### Session Modes
+
+Each trigger has a configurable `session_mode`:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `ephemeral` | New session per run, discarded after | Cron jobs, one-off webhooks |
+| `persistent` | Resume same session across runs | Signal channel, email thread, ongoing context |
+
+Persistent sessions store their `session_id` in the triggers table. The next run resumes where the last left off.
 
 ## Trigger Types
 
 ### Cron
 
-Scheduled execution via supercronic. The schedule uses standard cron syntax.
+Scheduled execution via supercronic. Uses standard cron syntax.
 
-**Examples:**
 | Schedule | Meaning |
 |----------|---------|
 | `*/15 * * * *` | Every 15 minutes |
@@ -17,23 +64,25 @@ Scheduled execution via supercronic. The schedule uses standard cron syntax.
 | `0 6 * * *` | Daily at 6:00 |
 | `0 8 * * 1` | Mondays at 8:00 |
 
-When a cron trigger fires, `trigger.sh` reads the prompt from the database, writes it as a message to the inbox, and touches `.wake` to resume Claude.
+Typically `ephemeral` — each run is independent.
 
-The crontab at `workspace/crontab` is auto-generated from the triggers database. Static entries (like the daily cleanup) are preserved above the `AUTO-GENERATED` marker. You don't need to edit the crontab manually — manage cron triggers via the web-ui or MCP tools.
+The crontab at `workspace/crontab` is auto-generated from the triggers database. Static entries (like the daily cleanup) are preserved above the `AUTO-GENERATED` marker. Manage cron triggers via the web-ui or MCP tools.
 
 ### Webhook
 
-HTTP endpoints that accept POST requests from external services. Each webhook trigger gets a URL:
+HTTP endpoints that accept POST requests:
 
 ```
 POST /api/webhook/<trigger-name>
 ```
 
-The request payload is injected into the prompt template via the `{{payload}}` placeholder. Webhooks support optional authentication via the `X-Webhook-Secret` header.
+The request payload is injected into the prompt template via `{{payload}}`. Optional authentication via `X-Webhook-Secret` header.
+
+Typically `ephemeral` per event, but can be `persistent` if webhook events relate to an ongoing conversation.
 
 ### Manual
 
-On-demand triggers with no automatic schedule. Fire them via the "Run" button in the web-ui or by asking Claude to run them.
+On-demand triggers. Fire via the web-ui "Run" button or by asking Claude.
 
 ## Creating Triggers
 
@@ -45,37 +94,32 @@ On-demand triggers with no automatic schedule. Fire them via the "Run" button in
    - **Name:** Lowercase slug (e.g. `github-check`)
    - **Type:** Cron, Webhook, or Manual
    - **Schedule:** Cron expression (for cron triggers)
+   - **Session Mode:** `ephemeral` (default) or `persistent`
    - **Webhook Secret:** Optional auth token (for webhooks)
    - **Channel:** Inbox channel for generated messages (default: `internal`)
-   - **Prompt:** What Claude should do when triggered. Use `{{payload}}` for webhook data.
+   - **Prompt:** What the trigger session should do. Use `{{payload}}` for webhook data.
 4. Click **Create Trigger**
 
-### Via MCP (Claude creates it)
+### Via MCP
 
-Ask Claude in natural language:
-
-```
-"Set up an hourly check of my GitHub repos for new issues"
-```
-
-Claude will use the `trigger_create` MCP tool:
 ```json
 {
   "name": "github-issues",
   "type": "cron",
   "schedule": "0 * * * *",
+  "session_mode": "ephemeral",
   "description": "Hourly GitHub issue check",
-  "prompt": "Check the GitHub repos for new issues. Report any updates and suggest actions."
+  "prompt": "Check GitHub repos for new issues. If there are critical issues, escalate to main session via inbox_write."
 }
 ```
 
 ### Via curl
 
-Create via the web-ui form endpoint:
 ```bash
 curl -X POST http://localhost:8080/triggers \
   -d "name=my-trigger" \
   -d "type=manual" \
+  -d "session_mode=ephemeral" \
   -d "description=Test trigger" \
   -d "prompt=Hello, this is a test trigger."
 ```
@@ -124,27 +168,19 @@ curl -X POST http://localhost:8080/api/webhook/alert \
 
 ### Response
 
-Success:
 ```json
-{ "ok": true, "trigger": "github-push", "message": "Webhook received, Claude will process it" }
-```
-
-Error:
-```json
-{ "error": "Invalid secret" }     // 401
-{ "error": "Webhook disabled" }   // 403
-{ "error": "Webhook not found" }  // 404
+{ "ok": true, "trigger": "github-push", "message": "Trigger session started" }
 ```
 
 ### Authentication
 
-If `webhook_secret` is set, the webhook validates the `X-Webhook-Secret` header (or `?secret=` query parameter) against the stored secret. Requests without a matching secret are rejected with 401.
+If `webhook_secret` is set, the webhook validates the `X-Webhook-Secret` header (or `?secret=` query parameter). Requests without a matching secret are rejected with 401.
 
-If no secret is configured, the webhook accepts all requests. Use this for trusted internal networks or services that don't support custom headers.
+If no secret is configured, the webhook accepts all requests.
 
 ### Payload in Prompts
 
-The `{{payload}}` placeholder in the prompt template is replaced with the request body:
+The `{{payload}}` placeholder is replaced with the request body:
 
 | Content-Type | Payload Format |
 |-------------|----------------|
@@ -152,83 +188,87 @@ The `{{payload}}` placeholder in the prompt template is replaced with the reques
 | `application/x-www-form-urlencoded` | JSON of parsed form fields |
 | Anything else | Raw text body |
 
-**Example prompt template:**
+## Escalation Pattern
+
+Trigger sessions act as a first-line filter. The escalation flow:
+
+1. **Trigger session processes the event** using its prompt
+2. **Simple case**: Handle directly — respond via `reply_send`, take quick MCP actions, done
+3. **Complex case**: Write one or more tasks to the main session inbox via `inbox_write`
+4. `inbox_write` automatically touches `.wake` → watcher resumes main session
+5. Main session picks up the escalated tasks
+
+### Single Task Escalation
+
 ```
-A deployment notification was received:
+inbox_write(channel="task", sender="trigger:github-issues", content="Review and fix issue #42: login page crashes on Safari")
+```
 
-{{payload}}
+### Multi-Task Escalation
 
-Check if the deployment was successful. If it failed, investigate the logs.
+A single trigger event can produce multiple tasks:
+
+```
+inbox_write(channel="task", sender="trigger:deploy-webhook", content="Update CHANGELOG.md with v2.3.0 release notes")
+inbox_write(channel="task", sender="trigger:deploy-webhook", content="Run post-deploy smoke tests and report results")
+inbox_write(channel="task", sender="trigger:deploy-webhook", content="Notify stakeholders about the v2.3.0 release")
 ```
 
 ## Integration Examples
 
-### GitHub Webhooks
+### GitHub Webhooks (Filter + Escalate)
 
 ```
-Name:     github-push
-Type:     Webhook
-Secret:   (generate one)
-Prompt:   New push to repository:
+Name:           github-push
+Type:           Webhook
+Session Mode:   ephemeral
+Secret:         (generate one)
+Prompt:         A push event was received:
 
-          {{payload}}
+                {{payload}}
 
-          Review the commit messages. If there are any issues worth noting, summarize them.
+                Analyze the commits. If there are only docs changes, just log it.
+                If there are code changes, escalate to main session with a summary
+                of what changed and what needs review.
 ```
 
-In GitHub: Settings > Webhooks > Add webhook, set the Payload URL and Secret.
-
-### Slack Slash Commands
+### Signal Channel (Persistent Session)
 
 ```
-Name:     slack-command
-Type:     Webhook
-Channel:  web
-Prompt:   Slack command received:
+Name:           signal-alice
+Type:           Webhook
+Session Mode:   persistent
+Channel:        signal
+Prompt:         New message from Signal:
 
-          {{payload}}
+                {{payload}}
 
-          Parse the command and respond appropriately.
+                Respond conversationally. If the message requests a complex task
+                (code changes, research report, etc.), escalate to main session.
 ```
 
-In Slack: Create a Slash Command, set the Request URL to your webhook endpoint.
-
-### Daily Standup Reminder
+### Daily Standup (Ephemeral Cron)
 
 ```
-Name:     standup-reminder
-Type:     Cron
-Schedule: 0 9 * * 1-5
-Prompt:   It's 9 AM on a weekday. Prepare a standup summary:
-          - What was accomplished yesterday (check journal)
-          - What's planned for today (check inbox and pending tasks)
-          - Any blockers or concerns
+Name:           standup-reminder
+Type:           Cron
+Schedule:       0 9 * * 1-5
+Session Mode:   ephemeral
+Prompt:         Prepare a standup summary using qmd_search to check recent memory.
+                If there are pending items that need attention, escalate them as
+                individual tasks to main session.
 ```
 
-### Health Check
+### Health Check (Filter, Escalate Only on Problems)
 
 ```
-Name:     health-check
-Type:     Cron
-Schedule: */30 * * * *
-Prompt:   Run a system health check:
-          - Check disk space with df -h
-          - Check memory with free -m
-          - Verify all services are running
-          Report only if something needs attention.
-```
-
-### Monitoring Alert
-
-```
-Name:     uptime-alert
-Type:     Webhook
-Prompt:   An uptime monitoring alert was received:
-
-          {{payload}}
-
-          Investigate the issue. Check if the service is still down.
-          If critical, write a summary to MEMORY.md.
+Name:           health-check
+Type:           Cron
+Schedule:       */30 * * * *
+Session Mode:   ephemeral
+Prompt:         Run a system health check (disk, memory, services).
+                Only escalate to main session if something needs attention.
+                Otherwise, silently succeed.
 ```
 
 ## Managing Triggers
@@ -236,10 +276,10 @@ Prompt:   An uptime monitoring alert was received:
 ### Web-UI
 
 The `/triggers` page provides full CRUD:
-- **List** all triggers with type, status, schedule/URL, last run, run count
+- **List** all triggers with type, status, session mode, schedule/URL, last run, run count
 - **Toggle** enable/disable (HTMX live update)
 - **Run** any trigger manually (even cron triggers)
-- **Edit** description, schedule, prompt, secret, channel
+- **Edit** description, schedule, prompt, secret, channel, session mode
 - **Delete** with confirmation
 
 ### MCP Tools
@@ -247,18 +287,16 @@ The `/triggers` page provides full CRUD:
 | Tool | Description |
 |------|-------------|
 | `trigger_list` | List all triggers (optional filter by type) |
-| `trigger_create` | Create with name, type, schedule, prompt, secret |
+| `trigger_create` | Create with name, type, schedule, prompt, session_mode, secret |
 | `trigger_update` | Update fields by name |
 | `trigger_delete` | Delete by name |
 
 ### Prompt Fallback
 
-If a trigger's `prompt` field is empty, `trigger.sh` looks for a prompt file at:
+If a trigger's `prompt` field is empty, `trigger.sh` looks for:
 ```
 workspace/triggers/cron/<trigger-name>/event-prompt.md
 ```
-
-This allows storing long or complex prompts as files instead of database fields.
 
 ## Crontab Sync
 
@@ -267,15 +305,6 @@ When cron triggers are created, updated, or deleted, the crontab is automaticall
 1. Static entries (above `AUTO-GENERATED` marker) are preserved
 2. All enabled cron triggers from the database are appended
 3. supercronic detects the file change and reloads
-
-The sync runs:
-- After any trigger create/update/delete (via MCP or web-ui)
-- During container init (Phase 9)
-
-You can also run it manually:
-```bash
-bun run /atlas/app/triggers/sync-crontab.ts
-```
 
 ## How It All Connects
 
@@ -288,27 +317,33 @@ bun run /atlas/app/triggers/sync-crontab.ts
                                   ▼
 ┌───────────┐         ┌──────────────────┐         ┌──────────────┐
 │ External   │  POST   │    Web-UI        │  button  │  Claude      │
-│ Service    │────────▸│  /api/webhook/   │◂────────│  MCP: inbox_ │
-└───────────┘         │  /triggers/:id/  │         │  write       │
+│ Service    │────────▸│  /api/webhook/   │◂────────│  MCP: trigger│
+└───────────┘         │  /triggers/:id/  │         │  _create     │
                       │  run             │         └──────────────┘
                       └────────┬─────────┘
                                │
                                ▼
                     ┌────────────────────┐
-                    │ INSERT INTO inbox  │
-                    │ touch .wake        │
+                    │ trigger.sh <name>  │
+                    │ Spawns trigger     │
+                    │ Claude session     │
+                    │ (read-only + MCPs) │
                     └────────┬───────────┘
                              │
-                             ▼
-                    ┌────────────────────┐
-                    │ watcher.sh         │
-                    │ inotifywait        │
-                    └────────┬───────────┘
-                             │
-                             ▼
-                    ┌────────────────────┐
-                    │ Claude Code        │
-                    │ resumes session    │
-                    │ processes message  │
-                    └────────────────────┘
+                   ┌─────────┴─────────┐
+                   │                   │
+              Handles it          Escalates via
+              directly            inbox_write()
+                   │                   │
+                   ▼                   ▼
+              ┌─────────┐    ┌────────────────┐
+              │  Done   │    │ touch .wake    │
+              └─────────┘    └───────┬────────┘
+                                     │
+                                     ▼
+                            ┌────────────────┐
+                            │ watcher.sh     │
+                            │ → main session │
+                            │ (read/write)   │
+                            └────────────────┘
 ```

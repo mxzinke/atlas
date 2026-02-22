@@ -145,6 +145,8 @@ CREATE TABLE IF NOT EXISTS triggers (
   schedule TEXT,
   webhook_secret TEXT,
   prompt TEXT DEFAULT '',
+  session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
+  session_id TEXT,
   enabled INTEGER DEFAULT 1,
   last_run TEXT,
   run_count INTEGER DEFAULT 0,

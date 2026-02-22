@@ -9,6 +9,31 @@ MEMORY="$WORKSPACE/memory/MEMORY.md"
 MEMORY_DIR="$WORKSPACE/memory"
 DB="$WORKSPACE/inbox/atlas.db"
 
+# --- Trigger session: minimal context ---
+if [ -n "${ATLAS_TRIGGER:-}" ]; then
+  echo "=== TRIGGER SESSION: ${ATLAS_TRIGGER} ==="
+  echo ""
+  echo "You are running as a trigger session (read-only). Your role:"
+  echo "- Process the event described in the prompt"
+  echo "- Handle simple tasks directly (reply_send, MCP actions)"
+  echo "- Escalate complex or write-heavy tasks to the main session via inbox_write"
+  echo "- You can use qmd_search for research and inbox tools for communication"
+  echo "- Do NOT modify workspace files directly"
+  echo ""
+
+  # Load identity (triggers need to know who they are)
+  if [ -f "$IDENTITY" ]; then
+    echo "--- IDENTITY ---"
+    cat "$IDENTITY"
+    echo ""
+  fi
+
+  echo "=== TRIGGER READY ==="
+  exit 0
+fi
+
+# --- Main session: full context ---
+
 echo "=== ATLAS SESSION START ==="
 echo ""
 

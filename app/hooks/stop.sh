@@ -13,8 +13,15 @@ if [ "${ATLAS_CLEANUP:-}" = "1" ]; then
   exit 0
 fi
 
+# Trigger session mode - save session ID if persistent, then exit cleanly
+if [ -n "${ATLAS_TRIGGER:-}" ]; then
+  # Trigger sessions don't check the inbox or loop — they just finish
+  exit 0
+fi
+
+# === Main session logic below ===
+
 # Save current session ID
-# Try multiple methods to find the active session ID
 CURRENT_SESSION=""
 
 # Method 1: Environment variable (if set by Claude Code)

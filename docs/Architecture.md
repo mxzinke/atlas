@@ -133,6 +133,8 @@ Atlas uses a single SQLite database at `workspace/inbox/atlas.db` (WAL mode).
 | schedule | TEXT | Cron expression (for type=cron) |
 | webhook_secret | TEXT | Optional secret for webhook auth |
 | prompt | TEXT | Prompt template (`{{payload}}` for webhooks) |
+| session_mode | TEXT | `ephemeral` (new per run) or `persistent` (resume across runs) |
+| session_id | TEXT | Stored session ID for persistent triggers |
 | enabled | INTEGER | 1=active, 0=disabled |
 | last_run | TEXT | Last execution timestamp |
 | run_count | INTEGER | Total execution count |
@@ -144,22 +146,33 @@ Claude Code hooks inject context at lifecycle events. Hooks are shell scripts th
 
 ### SessionStart (`app/hooks/session-start.sh`)
 
-Runs when Claude wakes up. Outputs:
+Runs when Claude wakes up. Behavior depends on session type:
+
+**Main session** outputs:
 1. **Identity** — Full `identity.md` (name, style, tools, restrictions)
 2. **Soul** — Full `soul.md` (behavioral philosophy, boundaries)
 3. **Long-term memory** — Full `MEMORY.md`
 4. **Recent journals** — List of recent journal filenames with line counts (not full content)
 5. **Inbox status** — Number of pending messages
 
+**Trigger session** (detected via `ATLAS_TRIGGER` env var) outputs:
+1. **Role instructions** — Read-only filter role, escalation guidelines
+2. **Identity** — `identity.md` (minimal context)
+
 Does **not** inject config.yml (Claude can read it when needed).
 
 ### Stop (`app/hooks/stop.sh`)
 
-Runs after Claude finishes a response:
+Runs after Claude finishes a response. Behavior depends on session type:
+
+**Main session:**
 1. Saves current session ID to `.last-session-id`
 2. Queries pending messages
-3. If pending: outputs next message JSON, exits 1 (continue processing)
+3. If pending: outputs next message JSON, exits 2 (continue processing)
 4. If none: reminds Claude to write a journal entry, exits 0 (sleep)
+
+**Trigger session** (detected via `ATLAS_TRIGGER` env var):
+1. Exits 0 immediately — trigger sessions don't loop on inbox
 
 ### PreCompact (`app/hooks/pre-compact-auto.sh`, `pre-compact-manual.sh`)
 
@@ -188,13 +201,13 @@ Runs when a team member (subagent) finishes. Quality gate that prompts Claude to
 
 ## Message Flow
 
-### Web Chat
+### Web Chat (Main Session)
 
 ```
 User types in /chat
   → POST /chat → INSERT message (channel=web) → touch .wake
-  → watcher detects .wake → resume Claude session
-  → SessionStart hook loads context
+  → watcher detects .wake → resume main Claude session
+  → SessionStart hook loads identity + memory
   → Claude calls inbox_list → sees pending message
   → Claude calls inbox_mark(status=processing)
   → Claude processes and generates response
@@ -203,24 +216,40 @@ User types in /chat
   → Web-UI shows response on refresh
 ```
 
-### Webhook
+### Trigger (Cron / Webhook / Manual)
+
+Triggers spawn their own Claude session. They act as a first-line filter with
+read-only workspace access and MCP tools.
 
 ```
-External service → POST /api/webhook/:name
-  → Validate secret (if configured)
-  → Read payload → replace {{payload}} in prompt template
-  → INSERT message → touch .wake
-  → (same processing flow as above)
+Event arrives (cron schedule / webhook POST / manual run)
+  → trigger.sh <name>
+  → Read trigger config from DB (prompt, session_mode, session_id)
+  → Spawn trigger Claude session:
+    - ephemeral: new session every run
+    - persistent: resume stored session_id
+  → SessionStart hook detects ATLAS_TRIGGER → loads minimal context
+  → Trigger session processes the event:
+    Option A: Handles directly (reply_send, MCP actions) → done
+    Option B: Escalates to main via inbox_write (1..N tasks)
+  → inbox_write touches .wake → watcher resumes main session
+  → Stop hook detects ATLAS_TRIGGER → saves session_id if persistent → exit
 ```
 
-### Cron Trigger
+### Escalation Flow
 
 ```
-supercronic → trigger.sh <name>
-  → Read trigger from DB → check enabled
-  → Build prompt (from DB or workspace fallback file)
-  → INSERT message → touch .wake
-  → (same processing flow as above)
+Trigger session                          Main session
+     │                                        │
+     │  inbox_write(channel="task",           │
+     │    content="Fix issue #42")            │
+     │  ──────────────────────────────────▸   │
+     │                              .wake ──▸ │ wakes up
+     │  inbox_write(channel="task",           │
+     │    content="Update CHANGELOG")         │
+     │  ──────────────────────────────────▸   │
+     │                                        │ processes tasks
+     │  done                                  │ sequentially
 ```
 
 ## Filesystem Layout

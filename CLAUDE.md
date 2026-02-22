@@ -15,16 +15,17 @@ Atlas is a containerized autonomous agent system built on Claude Code. It uses a
 ### Core Components
 - **Inbox-MCP** (`app/inbox-mcp/`): SQLite-based MCP server for message and trigger management
 - **Web-UI** (`app/web-ui/`): Hono.js + HTMX dashboard on port 3000 (nginx proxy: 8080)
-- **Watcher** (`app/watcher.sh`): inotifywait-based event watcher, wakes Claude on new messages
-- **Hooks** (`app/hooks/`): SessionStart, Stop, PreCompact, SubagentStop
-- **Triggers** (`app/triggers/`): Generic trigger runner + crontab sync
+- **Watcher** (`app/watcher.sh`): inotifywait-based event watcher, wakes main session on new messages
+- **Hooks** (`app/hooks/`): SessionStart, Stop, PreCompact, SubagentStop (trigger-aware)
+- **Triggers** (`app/triggers/`): Autonomous agent sessions per trigger (read-only, filter/escalation)
 - **QMD**: Memory search (BM25/vector/hybrid) as HTTP MCP daemon
 
 ### Data Flow
-1. Trigger receives event → writes to inbox DB → touches `.wake`
-2. Watcher detects `.wake` → resumes Claude session
-3. Stop hook checks inbox → delivers next message or lets Claude sleep
-4. Memory is written as Markdown, QMD indexes automatically
+1. Trigger receives event → spawns own Claude session (read-only, with MCP access)
+2. Trigger session processes event: handles directly or escalates via `inbox_write`
+3. Escalated tasks → `.wake` → watcher resumes main session (read/write)
+4. Main session processes tasks from inbox sequentially
+5. Memory is written as Markdown, QMD indexes automatically
 
 ## Tech Stack
 - **Runtime**: Bun (TypeScript, no build step)
@@ -47,10 +48,10 @@ Atlas is a containerized autonomous agent system built on Claude Code. It uses a
 | `app/web-ui/` | Web dashboard (Hono + HTMX) |
 | `app/watcher.sh` | inotifywait event watcher |
 | `app/init.sh` | Container startup script |
-| `app/triggers/trigger.sh` | Generic trigger runner (cron/manual) |
+| `app/triggers/trigger.sh` | Trigger runner: spawns own Claude session per trigger |
 | `app/triggers/sync-crontab.ts` | Auto-generates crontab from DB triggers |
 | `app/triggers/cron/` | Cron-specific scripts (daily-cleanup, event) |
-| `app/prompts/` | Prompt templates |
+| `app/prompts/` | Prompt templates (incl. trigger-session.md) |
 | `app/defaults/` | Default config.yml and crontab |
 
 ## Denylist

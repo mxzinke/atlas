@@ -39,6 +39,8 @@ function createTables(database: Database.Database): void {
       schedule TEXT,
       webhook_secret TEXT,
       prompt TEXT DEFAULT '',
+      session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
+      session_id TEXT,
       enabled INTEGER DEFAULT 1,
       last_run TEXT,
       run_count INTEGER DEFAULT 0,
@@ -89,12 +91,20 @@ function migrateSchema(database: Database.Database): void {
         schedule TEXT,
         webhook_secret TEXT,
         prompt TEXT DEFAULT '',
+        session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
+        session_id TEXT,
         enabled INTEGER DEFAULT 1,
         last_run TEXT,
         run_count INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now'))
       );
     `);
+  }
+
+  // Add session_mode and session_id columns if missing (upgrade from pre-session triggers)
+  if (trigInfo && trigInfo.sql.includes("name TEXT") && !trigInfo.sql.includes("session_mode")) {
+    database.exec(`ALTER TABLE triggers ADD COLUMN session_mode TEXT DEFAULT 'ephemeral'`);
+    database.exec(`ALTER TABLE triggers ADD COLUMN session_id TEXT`);
   }
 }
 
