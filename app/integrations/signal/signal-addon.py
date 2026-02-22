@@ -29,6 +29,7 @@ from pathlib import Path
 CONFIG_PATH = "/atlas/workspace/config.yml"
 ATLAS_DB_PATH = "/atlas/workspace/inbox/atlas.db"
 SIGNAL_DB_DIR = "/atlas/workspace/inbox/signal"
+WAKE_PATH = "/atlas/workspace/inbox/.wake"
 TRIGGER_SCRIPT = "/atlas/app/triggers/trigger.sh"
 TRIGGER_NAME = "signal-chat"
 
@@ -186,6 +187,9 @@ def cmd_incoming(config, sender, message, name="", timestamp=""):
                (inbox_msg_id,))
     db.commit()
     db.close()
+
+    # Touch .wake so main session picks up the message even if trigger.sh fails
+    Path(WAKE_PATH).touch()
 
     print(f"[{datetime.now()}] Signal from {sender}: {message[:80]}... (inbox={inbox_msg_id})")
 

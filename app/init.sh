@@ -120,60 +120,23 @@ done
 # ── Phase 6: Initialize SQLite DB ──
 echo "[$(date)] Phase 6: Database init"
 DB="$WORKSPACE/inbox/atlas.db"
+FIRST_DB=false
 if [ ! -f "$DB" ]; then
-  sqlite3 "$DB" << 'SQL'
-PRAGMA journal_mode = WAL;
+  FIRST_DB=true
+fi
 
-CREATE TABLE IF NOT EXISTS messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  channel TEXT NOT NULL,
-  sender TEXT,
-  content TEXT NOT NULL,
-  reply_to TEXT,
-  status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done')),
-  response_summary TEXT,
-  created_at TEXT DEFAULT (datetime('now')),
-  processed_at TEXT
-);
+# Always run canonical schema init + migrations (idempotent)
+bun -e "import { initDb } from '/atlas/app/inbox-mcp/db'; initDb();" || {
+  echo "  ⚠ Database init via bun failed (non-fatal)"
+}
 
-CREATE TABLE IF NOT EXISTS triggers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
-  type TEXT NOT NULL CHECK(type IN ('cron','webhook','manual')),
-  description TEXT DEFAULT '',
-  channel TEXT DEFAULT 'internal',
-  schedule TEXT,
-  webhook_secret TEXT,
-  prompt TEXT DEFAULT '',
-  session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
-  enabled INTEGER DEFAULT 1,
-  last_run TEXT,
-  run_count INTEGER DEFAULT 0,
-  created_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS trigger_sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  trigger_name TEXT NOT NULL,
-  session_key TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  updated_at TEXT DEFAULT (datetime('now')),
-  UNIQUE(trigger_name, session_key)
-);
-
--- Default trigger: daily cleanup
-INSERT INTO triggers (name, type, description, channel, schedule, prompt) VALUES (
-  'daily-cleanup',
-  'cron',
-  'Daily memory flush and session cleanup',
-  'internal',
-  '0 6 * * *',
-  ''
-);
-SQL
-  echo "  Database initialized with new trigger schema"
+# Seed default trigger on first run
+if [ "$FIRST_DB" = true ] && [ -f "$DB" ]; then
+  sqlite3 "$DB" "INSERT OR IGNORE INTO triggers (name, type, description, channel, schedule, prompt) VALUES (
+    'daily-cleanup', 'cron', 'Daily memory flush and session cleanup', 'internal', '0 6 * * *', '');"
+  echo "  Database initialized with default trigger"
 else
-  echo "  Database already exists (migrations handled by inbox-mcp)"
+  echo "  Database ready (schema + migrations applied)"
 fi
 
 # ── Phase 7: User Extensions ──

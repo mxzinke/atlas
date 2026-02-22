@@ -1,50 +1,16 @@
 import { Hono } from "hono";
-import Database from "better-sqlite3";
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, closeSync, openSync } from "fs";
 import { join } from "path";
+import { getDb } from "../inbox-mcp/db";
 
 // --- Config ---
 const WS = "/atlas/workspace";
-const DB_PATH = `${WS}/inbox/atlas.db`;
 const MEMORY = `${WS}/memory`;
 const IDENTITY = `${WS}/identity.md`;
 const CONFIG = `${WS}/config.yml`;
 const EXTENSIONS = `${WS}/user-extensions.sh`;
 const LOCK = `${WS}/.session-running`;
 const WAKE = `${WS}/inbox/.wake`;
-
-// --- DB ---
-function getDb(): Database.Database {
-  mkdirSync(`${WS}/inbox`, { recursive: true });
-  const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      channel TEXT NOT NULL,
-      sender TEXT, content TEXT NOT NULL, reply_to TEXT,
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done')),
-      response_summary TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      processed_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS triggers (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL CHECK(type IN ('cron','webhook','manual')),
-      description TEXT DEFAULT '',
-      channel TEXT DEFAULT 'internal',
-      schedule TEXT,
-      webhook_secret TEXT,
-      prompt TEXT DEFAULT '',
-      enabled INTEGER DEFAULT 1,
-      last_run TEXT,
-      run_count INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
-  return db;
-}
 
 function syncCrontab(): void {
   try { Bun.spawnSync(["bun", "run", "/atlas/app/triggers/sync-crontab.ts"]); } catch {}
@@ -476,21 +442,11 @@ app.post("/triggers/:id/run", (c) => {
   const t = db.prepare("SELECT * FROM triggers WHERE id = ?").get(id) as any;
   if (!t) return c.html('<div class="text-muted">Not found</div>');
 
-  const prompt = t.prompt || `Trigger '${t.name}' was fired manually.`;
-
-  db.prepare(
-    "INSERT INTO messages (channel, sender, content) VALUES (?, ?, ?)"
-  ).run(t.channel || "internal", `trigger:${t.name}`, prompt);
-
-  db.prepare(
-    "UPDATE triggers SET last_run = datetime('now'), run_count = run_count + 1 WHERE id = ?"
-  ).run(id);
-
-  // Wake Claude
-  try {
-    mkdirSync(`${WS}/inbox`, { recursive: true });
-    closeSync(openSync(WAKE, "w"));
-  } catch {}
+  // Fire through trigger.sh for consistent behavior (session_mode, prompts, IPC)
+  Bun.spawn(["/atlas/app/triggers/trigger.sh", t.name], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
 
   const triggers = db.prepare("SELECT * FROM triggers ORDER BY type, name").all() as any[];
   return c.html(
@@ -548,25 +504,11 @@ app.post("/api/webhook/:name", async (c) => {
     payload = "(could not parse payload)";
   }
 
-  // Build prompt
-  let prompt = t.prompt || `Webhook '${name}' received:\n\n{{payload}}`;
-  prompt = prompt.replace(/\{\{payload\}\}/g, payload);
-
-  // Write to inbox
-  db.prepare(
-    "INSERT INTO messages (channel, sender, content) VALUES (?, ?, ?)"
-  ).run(t.channel || "webhook", `webhook:${name}`, prompt);
-
-  // Update trigger stats
-  db.prepare(
-    "UPDATE triggers SET last_run = datetime('now'), run_count = run_count + 1 WHERE id = ?"
-  ).run(t.id);
-
-  // Wake Claude
-  try {
-    mkdirSync(`${WS}/inbox`, { recursive: true });
-    closeSync(openSync(WAKE, "w"));
-  } catch {}
+  // Fire through trigger.sh for consistent behavior (session_mode, prompts, IPC)
+  Bun.spawn(["/atlas/app/triggers/trigger.sh", t.name, payload], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
 
   return c.json({ ok: true, trigger: name, message: "Webhook received, Claude will process it" });
 });

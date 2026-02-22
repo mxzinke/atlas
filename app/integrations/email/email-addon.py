@@ -39,6 +39,7 @@ from pathlib import Path
 CONFIG_PATH = "/atlas/workspace/config.yml"
 ATLAS_DB_PATH = "/atlas/workspace/inbox/atlas.db"
 EMAIL_DB_DIR = "/atlas/workspace/inbox/email"
+WAKE_PATH = "/atlas/workspace/inbox/.wake"
 TRIGGER_SCRIPT = "/atlas/app/triggers/trigger.sh"
 TRIGGER_NAME = "email-handler"
 STATE_FILE_LEGACY = "/atlas/workspace/inbox/.email-last-uid"
@@ -305,6 +306,8 @@ def write_to_atlas_inbox(sender, content, thread_id):
     msg_id = cursor.lastrowid
     atlas_db.commit()
     atlas_db.close()
+    # Touch .wake so main session picks up the message even if trigger.sh fails
+    Path(WAKE_PATH).touch()
     return msg_id
 
 
