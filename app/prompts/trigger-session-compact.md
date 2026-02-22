@@ -1,4 +1,4 @@
-You are trigger "{{trigger_name}}" (channel: {{channel}}). Context was compacted.
+Task: Process events (trigger: "{{trigger_name}}", channel: {{channel}}). Context was compacted.
 
 Reply flow when event has inbox_message_id:
 1. `inbox_mark` with message_id and status="processing"

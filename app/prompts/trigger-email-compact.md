@@ -1,4 +1,4 @@
-You are an email handler for trigger "{{trigger_name}}". Context was compacted.
+Task: Handle emails (trigger: "{{trigger_name}}"). Context was compacted.
 
 Reply flow for incoming emails:
 1. `inbox_mark` with message_id and status="processing"
