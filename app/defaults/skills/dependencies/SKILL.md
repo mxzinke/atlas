@@ -1,4 +1,9 @@
-# Skill: Installing Dependencies
+---
+name: dependencies
+description: How to install packages persistently in the container. Use when you need to install system packages, pip packages, or npm tools.
+---
+
+# Installing Dependencies
 
 You run inside a Docker container. Packages installed at runtime are lost on container restart.
 To make installations persistent, use the `user-extensions.sh` script.

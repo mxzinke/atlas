@@ -1,4 +1,9 @@
-# Skill: Triggers
+---
+name: triggers
+description: How to create and manage cron, webhook, and manual triggers. Use when setting up scheduled tasks or webhook integrations.
+---
+
+# Triggers
 
 Triggers are events that wake you up. Every trigger writes a message to the inbox and touches `.wake`.
 

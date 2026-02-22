@@ -1,4 +1,9 @@
-# Skill: Inbox
+---
+name: inbox
+description: How to process inbox messages — list, claim, work, reply. Use when handling pending messages or sending replies.
+---
+
+# Inbox
 
 The inbox is your message queue. Messages arrive from web chat, webhooks, cron triggers, Signal, email, or internal sources.
 

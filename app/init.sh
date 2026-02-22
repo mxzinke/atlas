@@ -95,13 +95,14 @@ if [ ! -f "$WORKSPACE/soul.md" ]; then
   echo "  Created default soul.md"
 fi
 
-# Default skills
+# Default skills (Claude Code convention: <name>/SKILL.md)
 if [ -d /atlas/app/defaults/skills ]; then
-  for skill in /atlas/app/defaults/skills/*.md; do
-    DEST="$WORKSPACE/skills/$(basename "$skill")"
-    if [ ! -f "$DEST" ]; then
-      cp "$skill" "$DEST"
-      echo "  Created skill: $(basename "$skill")"
+  for skill_dir in /atlas/app/defaults/skills/*/; do
+    SKILL_NAME=$(basename "$skill_dir")
+    DEST="$WORKSPACE/skills/$SKILL_NAME"
+    if [ ! -d "$DEST" ]; then
+      cp -r "$skill_dir" "$DEST"
+      echo "  Created skill: $SKILL_NAME"
     fi
   done
 fi
