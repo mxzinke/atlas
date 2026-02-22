@@ -5,12 +5,12 @@ description: How to create and manage cron, webhook, and manual triggers. Also c
 
 # Triggers
 
-Triggers are autonomous agent sessions that process events independently. Each trigger spawns its own Claude session (read-only, with MCP access) and acts as a first-line filter.
+Triggers are autonomous agent sessions that fire on events — scheduled (cron), HTTP (webhook), or on-demand (manual). Each trigger runs its own Claude session that can handle the event directly or escalate to the main session.
 
 ## Trigger Types
 
 ### Cron
-Scheduled execution. Uses standard cron syntax.
+Scheduled execution using standard cron syntax.
 
 | Schedule | Meaning |
 |----------|---------|
@@ -34,17 +34,7 @@ No schedule, no endpoint. Fired via the web-ui "Run" button or by request.
 | `ephemeral` | New session per run | Cron jobs, one-off webhooks |
 | `persistent` | Resume by session key | Signal contacts, email threads |
 
-Persistent triggers use a **session key** to track which session to resume.
-The key is the 3rd argument to `trigger.sh`:
-
-```
-trigger.sh <trigger-name> [payload] [session-key]
-```
-
-Examples:
-- `trigger.sh signal-chat '{"msg":"Hi"}' '+49170123456'` → session per contact
-- `trigger.sh email-handler '{"body":"..."}' 'thread-4821'` → session per thread
-- No key → `_default` (one session per trigger)
+Persistent triggers maintain separate sessions per key (e.g., per contact, per thread). If no key is provided, a single default session is used per trigger.
 
 ## MCP Tools
 
@@ -55,30 +45,62 @@ Examples:
 | `trigger_update` | Update fields (description, schedule, prompt, session_mode, enabled) |
 | `trigger_delete` | Delete by name |
 
-## Activation: What Happens After trigger_create
+## Creating Triggers
 
-### Cron Triggers → fully automatic
+### Cron Trigger (fully automatic)
 
-1. `trigger_create(type="cron", ...)` inserts the trigger in DB
-2. `sync-crontab.ts` is called automatically → writes cron entry to `workspace/crontab`
-3. supercronic detects the file change → trigger runs on schedule
-4. **Nothing else needed.** Claude just calls `trigger_create`.
+```
+trigger_create(
+  name="github-issues",
+  type="cron",
+  schedule="0 * * * *",
+  session_mode="ephemeral",
+  description="Hourly GitHub issue check",
+  channel="internal",
+  prompt="Check GitHub repos for new issues. Escalate critical ones to main session."
+)
+```
 
-### Webhook Triggers → endpoint ready immediately
+After creation, the crontab is synced automatically — supercronic picks it up. **Nothing else needed.**
 
-1. `trigger_create(type="webhook", ...)` inserts the trigger in DB
-2. HTTP endpoint is live at `http://<host>:8080/api/webhook/<name>`
-3. External services POST to this URL → message goes to inbox → main session wakes
-4. **Nothing else needed** for pure webhooks.
+### Webhook Trigger (endpoint ready immediately)
 
-### Signal / Email Triggers → need polling cron entry
+```
+trigger_create(
+  name="deploy-hook",
+  type="webhook",
+  session_mode="ephemeral",
+  description="Post-deploy notification",
+  channel="internal",
+  webhook_secret="my-secret-token",
+  prompt="Deployment event received:\n\n{{payload}}\n\nCheck status and escalate failures."
+)
+```
 
-For Signal and Email, a **poll process** must run to check for new messages. This is NOT automatic — Claude must add a cron entry after creating the trigger.
+The endpoint `http://<host>:8080/api/webhook/deploy-hook` is live immediately. External services POST to this URL with the optional `X-Webhook-Secret` header.
 
-**Signal setup (3 steps Claude performs):**
+### Manual Trigger
 
-```bash
-# Step 1: Create trigger
+```
+trigger_create(
+  name="weekly-report",
+  type="manual",
+  session_mode="ephemeral",
+  description="Generate weekly summary report",
+  channel="internal",
+  prompt="Generate a summary of this week's activity from memory and inbox."
+)
+```
+
+Fired via the web-ui dashboard or programmatically.
+
+## Signal Integration Setup
+
+The Signal add-on requires a trigger plus a polling cron entry.
+
+**Step 1: Create the trigger**
+
+```
 trigger_create(
   name="signal-chat",
   type="webhook",
@@ -86,17 +108,33 @@ trigger_create(
   channel="signal",
   prompt="New Signal message:\n\n{{payload}}"
 )
-
-# Step 2: Add poll to crontab (above the auto-generated marker)
-# Edit /atlas/workspace/crontab and add BEFORE the marker line:
-* * * * *  python3 /atlas/app/integrations/signal/signal-addon.py poll --once 2>&1 >> /atlas/logs/signal.log
-
 ```
 
-**Email setup (2 steps Claude performs):**
+**Step 2: Add polling to crontab**
+
+Edit `/atlas/workspace/crontab` and add this line **above** the `# === AUTO-GENERATED TRIGGERS` marker:
+
+```
+* * * * *  signal poll --once 2>&1 >> /atlas/logs/signal.log
+```
+
+The poller checks for new Signal messages every minute. When a message arrives, it fires the trigger with the sender's number as the session key — so each contact gets their own persistent session.
+
+**CLI tools available in trigger sessions:**
 
 ```bash
-# Step 1: Create trigger
+signal send +491701234567 "Hello!"
+signal contacts
+signal history +491701234567
+```
+
+## Email Integration Setup
+
+The Email add-on follows the same pattern.
+
+**Step 1: Create the trigger**
+
+```
 trigger_create(
   name="email-handler",
   type="webhook",
@@ -104,114 +142,42 @@ trigger_create(
   channel="email",
   prompt="New email:\n\n{{payload}}"
 )
-
-# Step 2: Add poll to crontab:
-*/2 * * * *  python3 /atlas/app/integrations/email/email-addon.py poll --once 2>&1 >> /atlas/logs/email.log
 ```
 
-**Important**: Cron entries go **above** the `# === AUTO-GENERATED TRIGGERS` marker in `workspace/crontab`. sync-crontab.ts preserves everything above the marker.
+**Step 2: Add polling to crontab**
 
-## Prompt Lifecycle
-
-A persistent trigger session goes through three prompt phases. Each has channel-specific templates (`signal`, `email`, fallback `session`):
-
-### 1. Initial Spawn (`trigger-{channel}.md`)
-
-When a new session is created (no existing session for this key):
+Edit `/atlas/workspace/crontab` and add **above** the marker:
 
 ```
-[session-start.sh hook output: identity + trigger role]
-[trigger-{channel}.md: full role, reply flow, style, tools, rules]
----
-[trigger prompt field with {{payload}} replaced]
+*/2 * * * *  email poll --once 2>&1 >> /atlas/logs/email.log
 ```
 
-| Channel | Template | Style |
-|---------|----------|-------|
-| `signal` | `trigger-signal.md` | Conversational, short, mobile-friendly |
-| `email` | `trigger-email.md` | Professional, structured, greeting/sign-off |
-| *(other)* | `trigger-session.md` | Generic filter/escalation |
+Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one persistent session.
 
-### 2. IPC Injection (`trigger-{channel}-inject.md`)
+**CLI tools available in trigger sessions:**
 
-When a message arrives while the session is already running (IPC socket alive):
-
-| Channel | Template | Content |
-|---------|----------|---------|
-| `signal` | `trigger-signal-inject.md` | Sender, payload, short reply reminder |
-| `email` | `trigger-email-inject.md` | Payload, professional reply reminder |
-| *(other)* | `trigger-session-inject.md` | Payload, generic process instructions |
-
-The inject template is a short context prompt — the session already has its role from the initial spawn. The key point: **the user is waiting for a reply**.
-
-### 3. Pre/Post-Compaction (`trigger-{channel}-pre-compact.md` + `trigger-{channel}-compact.md`)
-
-When context approaches the limit, the PreCompact hook fires and outputs two phases:
-
-**Pre-Compaction** (`trigger-{channel}-pre-compact.md`):
-- "Save conversation state, notes, and pending work to memory NOW"
-- Channel-specific: Signal saves contact notes, Email saves thread summaries
-
-**Post-Compaction** (`trigger-{channel}-compact.md`):
-- Re-establishes role, tools, reply flow, and style rules
-- Marked `=== POST-COMPACTION CONTEXT — PRESERVE THIS ===` for compaction survival
-- Tells Claude to check `memory/` and `qmd_search` to recover lost context
-
-Both are output sequentially by the hook. Claude acts on pre-compact (saves to memory), then compaction preserves the post-compact context as best it can.
-
-### Template File Overview
-
-```
-app/prompts/
-├── trigger-signal.md              # Initial: Signal session setup
-├── trigger-signal-inject.md       # Inject: new Signal message arrived
-├── trigger-signal-pre-compact.md  # Pre-compact: save Signal conversation state
-├── trigger-signal-compact.md      # Post-compact: re-establish Signal context
-├── trigger-email.md               # Initial: Email session setup
-├── trigger-email-inject.md        # Inject: new email arrived
-├── trigger-email-pre-compact.md   # Pre-compact: save email correspondence state
-├── trigger-email-compact.md       # Post-compact: re-establish Email context
-├── trigger-session.md             # Initial: generic fallback
-├── trigger-session-inject.md      # Inject: generic fallback
-├── trigger-session-pre-compact.md # Pre-compact: generic fallback
-└── trigger-session-compact.md     # Post-compact: generic fallback
+```bash
+email reply <thread_id> "Reply body"
+email send recipient@example.com "Subject" "Body text"
+email threads
+email thread <thread_id>
 ```
 
-### Adding a New Channel
+## Crontab Structure
 
-To add a new channel (e.g., `telegram`):
-1. Create `trigger-telegram.md` (initial session prompt)
-2. Create `trigger-telegram-inject.md` (IPC injection template)
-3. Create `trigger-telegram-pre-compact.md` (pre-compaction memory flush)
-4. Create `trigger-telegram-compact.md` (post-compaction context)
-5. Set `channel: "telegram"` in `trigger_create` — trigger.sh picks the templates automatically
+The crontab at `/atlas/workspace/crontab` has two sections:
 
-## IPC Socket Injection
+- **Static** (above `# === AUTO-GENERATED TRIGGERS`): Manual entries like Signal/Email pollers
+- **Dynamic** (below the marker): Auto-generated from enabled cron triggers
 
-When a message arrives while a trigger session is already running for the same key, trigger.sh injects it directly via Claude Code's IPC socket (`/tmp/claudec-<session_id>.sock`). The inject template (see above) is used instead of a hardcoded message. No new process is spawned.
-
-## Creating a Trigger
-
-```
-trigger_create:
-  name: "github-issues"
-  type: "cron"
-  schedule: "0 * * * *"
-  session_mode: "ephemeral"
-  description: "Hourly GitHub issue check"
-  channel: "internal"
-  prompt: "Check GitHub repos for new issues. Escalate critical ones to main session."
-```
-
-For webhooks, also set:
-- `webhook_secret`: optional auth token
-- `prompt`: use `{{payload}}` where you want the POST body injected
+Never edit below the marker — those entries are managed by `sync-crontab.ts`. Poller entries and custom cron jobs go above it.
 
 ## Escalation Pattern
 
-Trigger sessions act as filters:
-1. **Simple events**: Handle directly with CLI tools (`signal send` / `email reply`) or MCP actions
-2. **Complex events**: Escalate to main session via inbox_write (one or more tasks)
+Trigger sessions act as first-line filters:
+
+1. **Simple events**: Handle directly with CLI tools (`signal send`, `email reply`) or MCP actions
+2. **Complex events**: Escalate to the main session via `inbox_write`
 
 ```
 # Single task escalation
@@ -222,31 +188,7 @@ inbox_write(channel="task", sender="trigger:deploy", content="Update CHANGELOG f
 inbox_write(channel="task", sender="trigger:deploy", content="Run post-deploy smoke tests")
 ```
 
-## Signal Integration (Add-on)
-
-The Signal Add-on provides `signal` as a CLI tool (wrapper for `app/integrations/signal/signal-addon.py`).
-
-```bash
-signal send +491701234567 "Hello!"
-signal contacts
-signal history +491701234567
-signal poll --once              # Background: check signal-cli
-signal incoming +491701234567 "Hello!" --name "Alice"  # Inject test message
-```
-
-## Email Integration (Add-on)
-
-The Email Add-on provides `email` as a CLI tool (wrapper for `app/integrations/email/email-addon.py`).
-
-```bash
-email reply <thread_id> "Reply body"
-email send recipient@example.com "Subject" "Body text"
-email threads
-email thread <thread_id>
-email poll --once               # Background: check IMAP
-```
-
-Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one persistent session.
+The main session wakes automatically when new inbox messages arrive.
 
 ## Prompt Fallback
 
@@ -255,11 +197,21 @@ If a trigger's `prompt` field is empty, the system looks for:
 workspace/triggers/cron/<trigger-name>/event-prompt.md
 ```
 
-## Crontab Sync
+## Managing Triggers
 
-Cron triggers are automatically synced to `workspace/crontab`:
-- **Static** (above `# AUTO-GENERATED`): manual entries, poller cron jobs
-- **Dynamic** (below): auto-generated from enabled cron triggers
+```
+# List all triggers
+trigger_list()
 
-No manual crontab editing needed for cron triggers — just use `trigger_create`.
-For Signal/Email pollers, add entries to the static section above the marker.
+# List only cron triggers
+trigger_list(type="cron")
+
+# Disable a trigger
+trigger_update(name="github-issues", enabled=false)
+
+# Change schedule
+trigger_update(name="daily-report", schedule="0 8 * * *")
+
+# Delete a trigger
+trigger_delete(name="old-hook")
+```

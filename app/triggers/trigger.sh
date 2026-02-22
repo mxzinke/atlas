@@ -169,13 +169,30 @@ fi
 
 # Spawn trigger's own Claude session
 # ATLAS_TRIGGER env var tells hooks this is a trigger session (read-only)
-ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
-  claude "${CLAUDE_ARGS[@]}" "$FULL_PROMPT" 2>&1 | tee -a "$LOG" || true
+# Use --output-format json to reliably capture the session ID (avoids race with concurrent triggers)
+TRIGGER_OUT=$(mktemp /tmp/trigger-out-XXXXXX.json)
 
-# For persistent sessions: capture and store the session ID
+ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
+  claude "${CLAUDE_ARGS[@]}" --output-format json "$FULL_PROMPT" > "$TRIGGER_OUT" 2>>"$LOG" || true
+
+# Log the text result from JSON output
+python3 -c "
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    print(data.get('result', ''))
+except: pass
+" "$TRIGGER_OUT" >> "$LOG"
+
+# For persistent sessions: extract session ID from structured output (race-free)
 if [ "$SESSION_MODE" = "persistent" ]; then
-  NEW_SESSION_ID=$(find ~/.claude/projects/ -name "*.json" -path "*/sessions/*" -printf '%T@ %f\n' 2>/dev/null \
-    | sort -rn | head -1 | awk '{print $2}' | sed 's/\.json$//' || echo "")
+  NEW_SESSION_ID=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    print(data.get('session_id', ''))
+except: print('')
+" "$TRIGGER_OUT" 2>/dev/null)
 
   if [ -n "$NEW_SESSION_ID" ]; then
     sqlite3 "$DB" "INSERT INTO trigger_sessions (trigger_name, session_key, session_id) \
@@ -184,5 +201,7 @@ if [ "$SESSION_MODE" = "persistent" ]; then
     echo "[$(date)] Saved session for key=$SESSION_KEY: $NEW_SESSION_ID" | tee -a "$LOG"
   fi
 fi
+
+rm -f "$TRIGGER_OUT"
 
 echo "[$(date)] Trigger done: $TRIGGER_NAME (key=$SESSION_KEY)" | tee -a "$LOG"
