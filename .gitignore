@@ -3,6 +3,9 @@ atlas-home/
 workspace/
 logs/
 
+# Temporary folder
+tmp/
+
 # Dependencies
 node_modules/
 bun.lockb
