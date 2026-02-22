@@ -46,8 +46,7 @@ WAKE_PATH = "/atlas/workspace/inbox/.wake"
 TRIGGER_SCRIPT = "/atlas/app/triggers/trigger.sh"
 TRIGGER_NAME = "email-handler"
 ATTACHMENTS_DIR = "/atlas/workspace/inbox/email/attachments"
-STATE_FILE_LEGACY = "/atlas/workspace/inbox/.email-last-uid"
-THREADS_DIR_LEGACY = "/atlas/workspace/inbox/email-threads"
+MESSAGES_DIR = "/atlas/workspace/inbox/email/messages"
 
 
 # --- Config ---
@@ -137,52 +136,7 @@ def get_email_db(config):
         CREATE INDEX IF NOT EXISTS idx_emails_direction ON emails(direction);
     """)
 
-    # Migrate legacy data if present
-    _migrate_legacy(db)
-
     return db
-
-
-def _migrate_legacy(db):
-    """One-time migration from legacy JSON thread files and UID state."""
-    migrated = db.execute("SELECT value FROM state WHERE key='legacy_migrated'").fetchone()
-    if migrated:
-        return
-
-    # Migrate thread JSON files
-    if os.path.isdir(THREADS_DIR_LEGACY):
-        for f in Path(THREADS_DIR_LEGACY).glob("*.json"):
-            try:
-                data = json.loads(f.read_text())
-                thread_id = data.get("thread_id", f.stem)
-                refs = json.dumps(data.get("references", []))
-                participants = json.dumps(data.get("participants", []))
-                db.execute("""
-                    INSERT OR IGNORE INTO threads
-                    (thread_id, subject, last_message_id, references_chain,
-                     last_sender, last_sender_full, participants, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    thread_id,
-                    data.get("subject", ""),
-                    data.get("last_message_id", ""),
-                    refs,
-                    data.get("last_sender", ""),
-                    data.get("last_sender_full", ""),
-                    participants,
-                    data.get("updated_at", datetime.now().isoformat()),
-                ))
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    # Migrate last UID
-    if os.path.exists(STATE_FILE_LEGACY):
-        uid = Path(STATE_FILE_LEGACY).read_text().strip()
-        if uid:
-            db.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('last_uid', ?)", (uid,))
-
-    db.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('legacy_migrated', '1')")
-    db.commit()
 
 
 # --- Thread helpers ---
@@ -340,6 +294,40 @@ def extract_attachments(msg, thread_id):
     return attachments
 
 
+def save_email_file(thread_id, sender, subject, date_str, body, attachments=None):
+    """Save incoming email as a searchable markdown file."""
+    thread_dir = os.path.join(MESSAGES_DIR, thread_id)
+    os.makedirs(thread_dir, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filepath = os.path.join(thread_dir, f"{ts}.md")
+
+    lines = [
+        f"# {subject}",
+        "",
+        f"**From:** {sender}",
+        f"**Date:** {date_str}",
+        f"**Thread:** {thread_id}",
+    ]
+
+    if attachments:
+        lines.append("")
+        lines.append("**Attachments:**")
+        for a in attachments:
+            lines.append(f"- [{a['filename']}]({a['path']}) ({a['content_type']}, {a['size']} bytes)")
+
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append(body[:8000])
+    lines.append("")
+
+    with open(filepath, "w") as f:
+        f.write("\n".join(lines))
+
+    return filepath
+
+
 def is_whitelisted(sender, whitelist):
     if not whitelist:
         return True
@@ -439,6 +427,9 @@ def cmd_poll(config, once=False):
                 INSERT INTO emails (thread_id, message_id, direction, sender, subject, body)
                 VALUES (?, ?, 'in', ?, ?, ?)
             """, (thread_id, message_id_hdr, sender_addr, subject, body[:8000]))
+
+            # 2b. Save as searchable file
+            save_email_file(thread_id, sender, subject, msg.get("Date", ""), body, attachments)
 
             # 3. Write to Atlas inbox
             inbox_content = f"From: {sender}\nSubject: {subject}\n\n{body[:4000]}"

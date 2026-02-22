@@ -27,7 +27,7 @@ The event payload contains `inbox_message_id` and `sender` (phone number). To re
 If the request needs complex work (code changes, file modifications, deep analysis, multi-step tasks), escalate to the main session:
 
 1. `inbox_mark(message_id=<inbox_message_id>, status="done", response_summary="Escalated")`
-2. `inbox_write(channel="task", sender="trigger:{{trigger_name}}", content="<clear task description with context>")`
+2. `inbox_write(sender="trigger:{{trigger_name}}", content="<clear task description with context>")`
 3. Send acknowledgment: `signal send "<sender>" "Got it, I'll handle that. Give me a moment."`
 
 ## Context
@@ -38,7 +38,7 @@ Use `qmd_search` or `qmd_vector_search` to look up relevant memory before respon
 
 ### MCP (internal system)
 - `inbox_mark` — Claim the message (set to "processing") and mark done
-- `inbox_write` — Escalate tasks to main session (channel="task")
+- `inbox_write` — Escalate tasks to main session
 - `inbox_list` — Check inbox state
 - `qmd_search` / `qmd_vector_search` — Search memory for context
 

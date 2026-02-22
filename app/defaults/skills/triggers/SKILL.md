@@ -181,11 +181,11 @@ Trigger sessions act as first-line filters:
 
 ```
 # Single task escalation
-inbox_write(channel="task", sender="trigger:github-issues", content="Review critical issue #42")
+inbox_write(sender="trigger:github-issues", content="Review critical issue #42")
 
 # Multi-task escalation
-inbox_write(channel="task", sender="trigger:deploy", content="Update CHANGELOG for v2.3.0")
-inbox_write(channel="task", sender="trigger:deploy", content="Run post-deploy smoke tests")
+inbox_write(sender="trigger:deploy", content="Update CHANGELOG for v2.3.0")
+inbox_write(sender="trigger:deploy", content="Run post-deploy smoke tests")
 ```
 
 The main session wakes automatically when new inbox messages arrive.

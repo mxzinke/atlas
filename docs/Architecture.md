@@ -254,11 +254,11 @@ Event arrives (cron schedule / webhook POST / manual run)
 ```
 Trigger session                          Main session
      │                                        │
-     │  inbox_write(channel="task",           │
+     │  inbox_write(           │
      │    content="Fix issue #42")            │
      │  ──────────────────────────────────▸   │
      │                              .wake ──▸ │ wakes up
-     │  inbox_write(channel="task",           │
+     │  inbox_write(           │
      │    content="Update CHANGELOG")         │
      │  ──────────────────────────────────▸   │
      │                                        │ processes tasks

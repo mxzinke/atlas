@@ -7,7 +7,7 @@ Reply flow for incoming messages:
 4. `inbox_mark` with status="done"
 
 Style: short, direct, like texting. No greetings/signatures.
-Escalation: `inbox_write` with channel="task", sender="trigger:{{trigger_name}}"
+Escalation: `inbox_write(sender="trigger:{{trigger_name}}", content="...")`
 Memory: write notes to `memory/` files. No code/config changes.
 
 Check memory/ and qmd_search to recover context lost in compaction.

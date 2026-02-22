@@ -219,7 +219,7 @@ Trigger sessions act as a first-line filter. The escalation flow:
 ### Single Task Escalation
 
 ```
-inbox_write(channel="task", sender="trigger:github-issues", content="Review and fix issue #42: login page crashes on Safari")
+inbox_write(sender="trigger:github-issues", content="Review and fix issue #42: login page crashes on Safari")
 ```
 
 ### Multi-Task Escalation
@@ -227,9 +227,9 @@ inbox_write(channel="task", sender="trigger:github-issues", content="Review and 
 A single trigger event can produce multiple tasks:
 
 ```
-inbox_write(channel="task", sender="trigger:deploy-webhook", content="Update CHANGELOG.md with v2.3.0 release notes")
-inbox_write(channel="task", sender="trigger:deploy-webhook", content="Run post-deploy smoke tests and report results")
-inbox_write(channel="task", sender="trigger:deploy-webhook", content="Notify stakeholders about the v2.3.0 release")
+inbox_write(sender="trigger:deploy-webhook", content="Update CHANGELOG.md with v2.3.0 release notes")
+inbox_write(sender="trigger:deploy-webhook", content="Run post-deploy smoke tests and report results")
+inbox_write(sender="trigger:deploy-webhook", content="Notify stakeholders about the v2.3.0 release")
 ```
 
 ## Integration Examples

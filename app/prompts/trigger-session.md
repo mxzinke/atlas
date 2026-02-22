@@ -14,7 +14,6 @@ You are an autonomous trigger session. Process the task below and decide:
 ## Escalation
 
 Use `inbox_write` with:
-- `channel`: "task"
 - `sender`: "trigger:{{trigger_name}}"
 - `content`: Clear, actionable task description with full context
 

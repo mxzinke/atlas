@@ -69,18 +69,17 @@ server.tool(
 // --- Tool: inbox_write ---
 server.tool(
   "inbox_write",
-  "Write a new message to the inbox",
+  "Write a new task to the inbox (wakes main session)",
   {
-    channel: z.string().describe("Channel: signal, email, web, internal"),
-    sender: z.string().optional().describe("Sender identifier"),
-    content: z.string().describe("Message content"),
+    sender: z.string().optional().describe("Sender identifier (e.g. 'trigger:github-issues')"),
+    content: z.string().describe("Task description with full context"),
     reply_to: z.string().optional().describe("Reference to original message or contact"),
   },
-  async ({ channel, sender, content, reply_to }) => {
+  async ({ sender, content, reply_to }) => {
     const db = getDb();
     const result = db
-      .prepare("INSERT INTO messages (channel, sender, content, reply_to) VALUES (?, ?, ?, ?)")
-      .run(channel, sender ?? null, content, reply_to ?? null);
+      .prepare("INSERT INTO messages (channel, sender, content, reply_to) VALUES ('task', ?, ?, ?)")
+      .run(sender ?? null, content, reply_to ?? null);
 
     const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(result.lastInsertRowid);
 
