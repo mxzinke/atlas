@@ -1,0 +1,25 @@
+# Host volumes (not in repo)
+atlas-home/
+workspace/
+logs/
+
+# Dependencies
+node_modules/
+bun.lockb
+
+# Runtime
+*.db
+*.db-wal
+*.db-shm
+.wake
+.last-session-id
+.session-running
+.cleanup-done
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.env
+secrets/

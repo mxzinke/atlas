@@ -1,0 +1,23 @@
+# Atlas Configuration
+# Editierbar durch Claude und über das Web-UI
+
+memory:
+  qmd_search_mode: search     # search (BM25) | vsearch (vector) | query (hybrid)
+  qmd_max_results: 6
+  load_memory_md: true
+  load_journal_days: 2
+
+signal:
+  history_turns: 20
+  whitelist: []
+
+daily_cleanup:
+  enabled: true
+  max_turns: 5
+
+team:
+  # Keine Obergrenze - Claude hat volle Kontrolle
+
+web_ui:
+  port: 8080
+  bind: "127.0.0.1"

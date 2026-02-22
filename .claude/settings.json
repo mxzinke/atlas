@@ -1,5 +1,26 @@
 {
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{ "type": "command", "command": "/atlas/app/hooks/session-start.sh" }]
+    }],
+    "Stop": [{
+      "hooks": [{ "type": "command", "command": "/atlas/app/hooks/stop.sh" }]
+    }],
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [{ "type": "command", "command": "/atlas/app/hooks/pre-compact-auto.sh" }]
+      },
+      {
+        "matcher": "manual",
+        "hooks": [{ "type": "command", "command": "/atlas/app/hooks/pre-compact-manual.sh" }]
+      }
+    ],
+    "SubagentStop": [{
+      "hooks": [{ "type": "command", "command": "/atlas/app/hooks/subagent-stop.sh" }]
+    }]
   }
 }

@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+SESSION_FILE=/atlas/workspace/.last-session-id
+CLEANUP_DONE=/atlas/workspace/.cleanup-done
+DB=/atlas/workspace/inbox/atlas.db
+
+# Check if there was activity in the last day
+MSGS=0
+if [ -f "$DB" ]; then
+  MSGS=$(sqlite3 "$DB" \
+    'SELECT count(*) FROM messages WHERE date(processed_at)>=date("now","-1 day")' 2>/dev/null || echo "0")
+fi
+
+echo "[$(date)] Daily cleanup starting. Recent messages: $MSGS"
+
+if [ -f "$SESSION_FILE" ] && [ "$MSGS" -gt 0 ]; then
+  rm -f "$CLEANUP_DONE"
+
+  ATLAS_CLEANUP=1 claude -p --resume "$(cat "$SESSION_FILE")" --max-turns 5 \
+    "$(cat /atlas/app/prompts/daily-cleanup-prompt.md)" 2>&1 | tee -a /atlas/logs/cleanup.log || true
+
+  # Wait for cleanup to complete (max 120s)
+  TIMEOUT=120
+  ELAPSED=0
+  while [ ! -f "$CLEANUP_DONE" ] && [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+  done
+
+  if [ ! -f "$CLEANUP_DONE" ]; then
+    echo "[$(date)] Cleanup timed out after ${TIMEOUT}s" >> /atlas/logs/cleanup.log
+  fi
+fi
+
+# Reset session - next wakeup creates new session
+rm -f "$SESSION_FILE"
+echo "[$(date)] Cleanup done. Messages: $MSGS" >> /atlas/logs/cleanup.log

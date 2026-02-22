@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  atlas:
+    build: .
+    container_name: atlas
+    restart: unless-stopped
+    volumes:
+      - ./atlas-home:/root
+      - ./workspace:/atlas/workspace
+      - ./logs:/atlas/logs
+    environment:
+      - TZ=Europe/Berlin
+      # Uncomment for API key auth (alternative to OAuth):
+      # - ANTHROPIC_API_KEY=sk-ant-...
+    ports:
+      - "127.0.0.1:8080:8080"
