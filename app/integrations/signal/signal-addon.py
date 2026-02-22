@@ -2,15 +2,17 @@
 """
 Signal Communication Add-on for Atlas.
 
-Thin module for Signal operations: incoming message injection, sending,
-and contact/conversation tracking. Uses its own SQLite database per number.
+All Signal operations in one module: polling signal-cli, injecting messages,
+sending/replying, and contact/conversation tracking. Uses its own SQLite
+database per Signal number.
 
 Subcommands:
-  incoming <sender> <message>  Inject a message: write to DB + inbox, fire trigger
-  send     <number> <message>  Send a Signal message via signal-cli
-  deliver  <reply-json-file>   Deliver a reply (called by reply-delivery.sh)
-  contacts [--limit N]         List known contacts
-  history  <number> [--limit]  Show message history with a contact
+  poll     [--once]              Poll signal-cli for new messages, process each
+  incoming <sender> <message>    Inject a message: write to DB + inbox, fire trigger
+  send     <number> <message>    Send a Signal message via signal-cli
+  deliver  <reply-json-file>     Deliver a reply (called by reply-delivery.sh)
+  contacts [--limit N]           List known contacts
+  history  <number> [--limit]    Show message history with a contact
 """
 
 import argparse
@@ -20,6 +22,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -103,6 +106,52 @@ def update_contact(db, number, name=""):
     """, (number, name))
 
 
+# --- POLL command (signal-cli → incoming) ---
+
+def cmd_poll(config, once=False):
+    """Poll signal-cli for new messages and process each via cmd_incoming."""
+    number = config["number"]
+    if not number:
+        print(f"[{datetime.now()}] ERROR: No Signal number configured", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        result = subprocess.run(
+            ["signal-cli", "-a", number, "receive", "--json"],
+            capture_output=True, text=True, timeout=30,
+        )
+        output = result.stdout.strip()
+    except FileNotFoundError:
+        print(f"[{datetime.now()}] ERROR: signal-cli not installed", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        output = ""
+
+    if not output:
+        return
+
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        envelope = msg.get("envelope", {})
+        dm = envelope.get("dataMessage", {})
+        sender = envelope.get("source", envelope.get("sourceNumber", ""))
+        body = dm.get("message", "")
+        name = envelope.get("sourceName", "")
+        ts = str(envelope.get("timestamp", ""))
+
+        if not sender or not body:
+            continue
+
+        cmd_incoming(config, sender, body, name=name, timestamp=ts)
+
+
 # --- INCOMING command (core: inject message into session) ---
 
 def cmd_incoming(config, sender, message, name="", timestamp=""):
@@ -139,9 +188,9 @@ def cmd_incoming(config, sender, message, name="", timestamp=""):
     db.commit()
     db.close()
 
-    print(f"Signal from {sender}: {message[:80]}... (inbox={inbox_msg_id})")
+    print(f"[{datetime.now()}] Signal from {sender}: {message[:80]}... (inbox={inbox_msg_id})")
 
-    # 3. Fire trigger (sender = session key for persistent per-contact sessions)
+    # 3. Fire trigger (trigger.sh handles IPC socket injection vs new session)
     payload = json.dumps({
         "inbox_message_id": inbox_msg_id,
         "sender": sender,
@@ -277,8 +326,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  signal-addon.py incoming +49170123 "Hello!"       # Inject incoming message
-  signal-addon.py send +49170123 "Hi!"              # Send outgoing message
+  signal-addon.py poll --once                        # Check signal-cli once
+  signal-addon.py poll                               # Continuous polling
+  signal-addon.py incoming +49170123 "Hello!"        # Inject incoming message
+  signal-addon.py send +49170123 "Hi!"               # Send outgoing message
   signal-addon.py contacts                           # List contacts
   signal-addon.py history +49170123                  # Conversation history
   signal-addon.py deliver reply.json                 # Deliver reply (internal)
@@ -286,7 +337,11 @@ Examples:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # incoming — inject a message into the system
+    # poll — fetch from signal-cli
+    p_poll = sub.add_parser("poll", help="Poll signal-cli for new messages")
+    p_poll.add_argument("--once", action="store_true", help="Check once and exit")
+
+    # incoming — inject a message directly
     p_in = sub.add_parser("incoming", help="Inject an incoming message")
     p_in.add_argument("sender", help="Sender phone number")
     p_in.add_argument("message", help="Message text")
@@ -314,7 +369,17 @@ Examples:
     args = parser.parse_args()
     config = load_config()
 
-    if args.command == "incoming":
+    if args.command == "poll":
+        if args.once:
+            cmd_poll(config, once=True)
+        else:
+            interval = int(os.environ.get("SIGNAL_POLL_INTERVAL", 5))
+            print(f"[{datetime.now()}] Signal polling starting "
+                  f"(number={config['number']}, interval={interval}s)")
+            while True:
+                cmd_poll(config, once=True)
+                time.sleep(interval)
+    elif args.command == "incoming":
         cmd_incoming(config, args.sender, args.message,
                      name=args.name, timestamp=args.timestamp)
     elif args.command == "send":

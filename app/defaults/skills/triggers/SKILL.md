@@ -109,20 +109,21 @@ Quick setup — 4 steps:
      channel: "signal"
      prompt: "New Signal message:\n\n{{payload}}\n\nRespond conversationally. Escalate complex tasks via inbox_write."
    ```
-4. **Start services**: `signal-receiver.sh` + `reply-delivery.sh` (see `app/integrations/`)
+4. **Start services**: `signal-addon.py poll` + `reply-delivery.sh`
 
-Flow: signal-cli → signal-addon.py incoming → trigger.sh (per contact) → reply_send → reply-delivery → signal-addon.py deliver → signal-cli send
+Flow: signal-cli → signal-addon.py poll/incoming → trigger.sh (IPC socket inject or spawn) → reply_send → reply-delivery → signal-addon.py deliver → signal-cli send
 
 ### Direct usage
 
 ```bash
-# Inject a message (as if received)
+# Poll signal-cli for new messages
+signal-addon.py poll --once
+
+# Inject a message directly
 signal-addon.py incoming +491701234567 "Hello!" --name "Alice"
 
-# Send a message
+# Send / contacts / history
 signal-addon.py send +491701234567 "Hello!"
-
-# List contacts / history
 signal-addon.py contacts
 signal-addon.py history +491701234567
 ```
@@ -151,9 +152,9 @@ Quick setup — 4 steps:
      channel: "email"
      prompt: "New email:\n\n{{payload}}\n\nRespond professionally. Escalate complex tasks via inbox_write."
    ```
-4. **Start services**: `email-receiver.sh` + `reply-delivery.sh` (see `app/integrations/`)
+4. **Start services**: `email-addon.py poll` + `reply-delivery.sh`
 
-Flow: IMAP poll → email-addon.py → trigger.sh (per thread, non-blocking) → reply_send → reply-delivery → email-addon.py deliver → SMTP
+Flow: IMAP poll → email-addon.py poll → trigger.sh (IPC socket inject or spawn) → reply_send → reply-delivery → email-addon.py deliver → SMTP
 
 Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one session.
 

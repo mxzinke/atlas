@@ -238,7 +238,8 @@ read-only workspace access and MCP tools.
 Event arrives (cron schedule / webhook POST / manual run)
   → trigger.sh <name> [payload] [session-key]
   → Read trigger config from DB (prompt, session_mode)
-  → Spawn trigger Claude session:
+  → Persistent + IPC socket alive? → inject directly into running session → done
+  → Otherwise, spawn trigger Claude session:
     - ephemeral: always a new session
     - persistent: lookup trigger_sessions by (name, session_key) → resume or new
   → SessionStart hook detects ATLAS_TRIGGER → loads minimal context
@@ -246,9 +247,6 @@ Event arrives (cron schedule / webhook POST / manual run)
     Option A: Handles directly (reply_send, MCP actions) → done
     Option B: Escalates to main via inbox_write (1..N tasks)
   → inbox_write touches .wake → watcher resumes main session
-  → Stop hook detects ATLAS_TRIGGER:
-    - Pending messages for this channel/key? → output next, exit 2 (continue)
-    - No pending? → exit 0
   → trigger.sh saves session ID to trigger_sessions (if persistent)
 ```
 

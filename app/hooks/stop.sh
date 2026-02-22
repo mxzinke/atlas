@@ -13,35 +13,9 @@ if [ "${ATLAS_CLEANUP:-}" = "1" ]; then
   exit 0
 fi
 
-# Trigger session mode — check for queued messages before exiting
+# Trigger session mode — messages are injected via IPC socket during the run,
+# no stop-hook polling needed. Just exit cleanly.
 if [ -n "${ATLAS_TRIGGER:-}" ]; then
-  TRIGGER_CHANNEL="${ATLAS_TRIGGER_CHANNEL:-}"
-  TRIGGER_KEY="${ATLAS_TRIGGER_SESSION_KEY:-}"
-
-  # Check if more messages arrived for this trigger's channel + key
-  if [ -f "$DB" ] && [ -n "$TRIGGER_CHANNEL" ] && [ -n "$TRIGGER_KEY" ]; then
-    PENDING=$(sqlite3 "$DB" \
-      "SELECT count(*) FROM messages WHERE channel='${TRIGGER_CHANNEL//\'/\'\'}' AND reply_to='${TRIGGER_KEY//\'/\'\'}' AND status='pending';" \
-      2>/dev/null || echo "0")
-
-    if [ "$PENDING" -gt 0 ]; then
-      NEXT_MSG=$(sqlite3 -json "$DB" \
-        "SELECT id, channel, sender, content, created_at FROM messages WHERE channel='${TRIGGER_CHANNEL//\'/\'\'}' AND reply_to='${TRIGGER_KEY//\'/\'\'}' AND status='pending' ORDER BY created_at ASC LIMIT 1;" \
-        2>/dev/null || echo "")
-
-      if [ -n "$NEXT_MSG" ]; then
-        {
-          echo "--- NEW MESSAGE (same channel) ---"
-          echo "$NEXT_MSG"
-          echo ""
-          echo "Another message arrived while you were processing. Use inbox_mark to claim it, then reply_send to respond."
-          echo "$((PENDING - 1)) more messages pending for this channel."
-        } >&2
-        exit 2
-      fi
-    fi
-  fi
-
   exit 0
 fi
 

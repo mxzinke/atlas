@@ -9,51 +9,74 @@ External Channel          Atlas
 ═══════════════           ═════
 
 Signal message ──▸ signal-addon.py incoming <sender> <message>
-                    │
+                    │                     (or: signal-addon.py poll)
                     ├─▸ UPDATE signal.db contacts + messages
                     ├─▸ INSERT INTO atlas inbox (channel=signal, reply_to=sender)
                     │
-                    └─▸ trigger.sh signal-chat <payload+inbox_msg_id> <sender>
-                                          │
-                                    Trigger session
-                                    (persistent, per sender)
-                                          │
-                              ┌───────────┴───────────┐
-                              │                       │
-                    reply_send(inbox_msg_id)      inbox_write
-                              │                  (escalate)
-                              ▼                       │
-                      replies/N.json                  ▼
-                              │               Main session
-                   reply-delivery.sh
-                      └─▸ signal-addon.py deliver → signal-cli send
+                    └─▸ trigger.sh signal-chat <payload> <sender>
+                          │
+                          ├─▸ IPC socket alive? → inject directly into running session
+                          │
+                          └─▸ No socket? → spawn new claude -p session
+                                                │
+                                          Trigger session
+                                          (persistent, per sender)
+                                                │
+                                    ┌───────────┴───────────┐
+                                    │                       │
+                          reply_send(inbox_msg_id)      inbox_write
+                                    │                  (escalate)
+                                    ▼                       │
+                            replies/N.json                  ▼
+                                    │               Main session
+                         reply-delivery.sh
+                            └─▸ signal-addon.py deliver → signal-cli send
 
 
 Email (IMAP) ──▸ email-addon.py poll
                     │
-                    ├─▸ UPDATE email.db threads + emails tables
+                    ├─▸ UPDATE email.db threads + emails
                     ├─▸ INSERT INTO atlas inbox (channel=email, reply_to=thread_id)
                     │
-                    └─▸ trigger.sh email-handler <payload+inbox_msg_id> <thread_id>
-                         (non-blocking, parallel per thread)
-                                          │
-                                    Trigger session
-                                    (persistent, per thread)
-                                          │
-                              ┌───────────┴───────────┐
-                              │                       │
-                    reply_send(inbox_msg_id)      inbox_write
-                              │                  (escalate)
-                              ▼                       │
-                      replies/N.json                  ▼
-                              │               Main session
-                   reply-delivery.sh
-                      └─▸ email-addon.py deliver → SMTP with threading headers
+                    └─▸ trigger.sh email-handler <payload> <thread_id>
+                          │
+                          ├─▸ IPC socket alive? → inject into running session
+                          │
+                          └─▸ No socket? → spawn new session
+                                                │
+                                          Trigger session
+                                          (persistent, per thread)
+                                                │
+                                    ┌───────────┴───────────┐
+                                    │                       │
+                          reply_send(inbox_msg_id)      inbox_write
+                                    │                  (escalate)
+                                    ▼                       │
+                            replies/N.json                  ▼
+                                    │               Main session
+                         reply-delivery.sh
+                            └─▸ email-addon.py deliver → SMTP with threading headers
 ```
+
+## IPC Socket Injection
+
+When a message arrives while a trigger session is already running for the same contact/thread, `trigger.sh` injects it directly into the running session via Claude Code's IPC socket:
+
+```
+Session running (claude -p --resume <id>)
+  → IPC socket exists at /tmp/claudec-<session_id>.sock
+  → trigger.sh sends: {"action":"send","text":"<message>","submit":true}
+  → Message is queued in the session, processed after current turn
+  → No new process, no restart
+```
+
+If the socket doesn't exist (session not running), `trigger.sh` spawns a new `claude -p` process as usual.
+
+This works identically for Signal (per contact), Email (per thread), and any future integration.
 
 ## Signal Add-on
 
-The Signal Communication Add-on (`app/integrations/signal/signal-addon.py`) is a unified module for all Signal operations. It has its own SQLite database per phone number for contact and message tracking.
+The Signal Add-on (`app/integrations/signal/signal-addon.py`) handles all Signal operations: polling signal-cli, injecting messages, sending, replying, and contact tracking. One SQLite database per phone number.
 
 ### Prerequisites
 
@@ -94,29 +117,30 @@ trigger_create:
     then reply_send to respond. Escalate complex tasks via inbox_write.
 ```
 
-**3. Start receiver** (add to supervisord or crontab):
+**3. Start services** (add to supervisord or crontab):
 
 ```bash
-# Continuous mode (supervisord):
-/atlas/app/integrations/signal-receiver.sh
+# Continuous (supervisord):
+python3 /atlas/app/integrations/signal/signal-addon.py poll
 
-# Cron mode (every minute):
-* * * * *  /atlas/app/integrations/signal-receiver.sh --once
-```
+# Cron (every minute):
+* * * * *  python3 /atlas/app/integrations/signal/signal-addon.py poll --once
 
-**4. Start reply delivery**:
-
-```bash
+# Reply delivery (continuous):
 /atlas/app/integrations/reply-delivery.sh
 ```
 
 ### CLI Usage
 
 ```bash
-# Inject an incoming message (stores + fires trigger)
+# Poll signal-cli for new messages
+signal-addon.py poll --once
+signal-addon.py poll                               # continuous
+
+# Inject a message directly (e.g., from external webhook)
 signal-addon.py incoming +491701234567 "Hello!" --name "Alice"
 
-# Send a message directly
+# Send a message
 signal-addon.py send +491701234567 "Hi!"
 
 # List known contacts
@@ -135,20 +159,13 @@ Each configured number gets its own SQLite database at `workspace/inbox/signal/<
 | `contacts` | Known contacts: number, name, message_count, first/last_seen |
 | `messages` | All messages (in + out): body, timestamp, contact association |
 
-### How It Works
-
-1. `signal-addon.py incoming` stores the message in signal.db and writes to atlas inbox
-2. Fires `trigger.sh signal-chat` with the sender as session key
-3. If a trigger session is already running for that contact, the stop hook picks up the new message in the next loop
-4. `reply_send` → `replies/N.json` → `reply-delivery.sh` → `signal-addon.py deliver` → `signal-cli send`
-
 ### Whitelist
 
 If `signal.whitelist` is set, only listed numbers can reach Atlas. Others are silently dropped. Empty list = accept all.
 
 ## Email Add-on
 
-The Email Communication Add-on (`app/integrations/email/email-addon.py`) is a unified module for all email operations. It has its own SQLite database per account for thread tracking and email history.
+The Email Add-on (`app/integrations/email/email-addon.py`) handles all email operations: IMAP polling, SMTP sending/replying, and thread tracking. One SQLite database per account.
 
 ### Prerequisites
 
@@ -198,28 +215,23 @@ trigger_create:
     then reply_send to respond. Escalate complex tasks via inbox_write.
 ```
 
-**4. Start poller** (cron or continuous):
+**4. Start services**:
 
 ```bash
-# Cron mode (every 2 minutes):
-*/2 * * * *  /atlas/app/integrations/email-receiver.sh --once
+# Continuous (supervisord):
+python3 /atlas/app/integrations/email/email-addon.py poll
 
-# Continuous mode (supervisord):
-/atlas/app/integrations/email-receiver.sh
-```
+# Cron (every 2 minutes):
+*/2 * * * *  python3 /atlas/app/integrations/email/email-addon.py poll --once
 
-**5. Start reply delivery**:
-
-```bash
+# Reply delivery (continuous):
 /atlas/app/integrations/reply-delivery.sh
 ```
 
 ### CLI Usage
 
-The add-on provides a unified CLI for all email operations:
-
 ```bash
-# Poll IMAP for new emails (fires triggers non-blocking)
+# Poll IMAP for new emails
 email-addon.py poll --once
 email-addon.py poll              # continuous mode
 
@@ -231,7 +243,6 @@ email-addon.py reply <thread_id> "Reply body"
 
 # List tracked threads
 email-addon.py threads
-email-addon.py threads --limit 50
 
 # Show thread detail (participants, message history)
 email-addon.py thread <thread_id>
@@ -239,7 +250,7 @@ email-addon.py thread <thread_id>
 
 ### Email Database
 
-Each configured account gets its own SQLite database at `workspace/inbox/email/<username>.db` with WAL mode for concurrent access:
+Each configured account gets its own SQLite database at `workspace/inbox/email/<username>.db` with WAL mode:
 
 | Table | Purpose |
 |-------|---------|
@@ -278,29 +289,9 @@ After sending, `reply` appends its own `Message-ID` to the references chain so s
 
 This means all emails in a thread share the same session key → same persistent trigger session → full conversational context.
 
-### Concurrency
-
-When multiple emails from different threads arrive in the same poll cycle:
-1. All emails are fetched and stored sequentially (fast — DB writes only)
-2. Triggers are fired **non-blocking** via `Popen` (no `subprocess.run` waiting)
-3. Each trigger runs in its own process with its own persistent session per thread
-4. SQLite WAL mode + `busy_timeout` prevents locking issues
-
 ### Whitelist
 
 `email.whitelist` accepts full addresses (`alice@example.com`) or domains (`example.org`). Empty = accept all.
-
-## Next-Loop Message Injection
-
-When a message arrives while a trigger session is already running for the same contact/thread, the stop hook injects it in the next response loop:
-
-1. The message is written to the atlas inbox (always happens first)
-2. The running session finishes its current response
-3. Stop hook queries inbox: `WHERE channel=<trigger_channel> AND reply_to=<session_key> AND status='pending'`
-4. If found → outputs message, `exit 2` (continue processing)
-5. Session processes the new message immediately — no restart, no new session
-
-This works identically for Signal (per contact), Email (per thread), and any future integration. The key is that `reply_to` in the inbox matches the trigger's session key (`ATLAS_TRIGGER_SESSION_KEY`).
 
 ## Reply Delivery
 
@@ -330,63 +321,32 @@ Start the delivery daemon:
 
 ## Quick Reference
 
-### Enable Signal in 4 Steps
+### Enable Signal in 3 Steps
 
 ```bash
-# 1. Install signal-cli
-echo 'apt-get install -y signal-cli' >> /atlas/workspace/user-extensions.sh
-
-# 2. Configure number + whitelist
-# Edit workspace/config.yml → signal section
-
-# 3. Create trigger (ask Claude):
-# "Create a persistent Signal chat trigger"
-
-# 4. Start services (add to supervisord):
-# /atlas/app/integrations/signal-receiver.sh
-# /atlas/app/integrations/reply-delivery.sh
+# 1. Install signal-cli + configure workspace/config.yml (signal section)
+# 2. Create trigger: "Create a persistent Signal chat trigger"
+# 3. Start: signal-addon.py poll + reply-delivery.sh
 ```
 
-### Signal Direct Usage
+### Enable Email in 3 Steps
 
 ```bash
-# Inject a message (as if received from Signal):
+# 1. Configure workspace/config.yml (email section) + store password
+# 2. Create trigger: "Create a persistent email handler trigger"
+# 3. Start: email-addon.py poll + reply-delivery.sh
+```
+
+### Direct Usage
+
+```bash
+# Signal
 python3 /atlas/app/integrations/signal/signal-addon.py incoming +49170123 "Hello!"
-
-# Send a message:
 python3 /atlas/app/integrations/signal/signal-addon.py send +49170123 "Hi!"
-
-# Contacts / history:
 python3 /atlas/app/integrations/signal/signal-addon.py contacts
-python3 /atlas/app/integrations/signal/signal-addon.py history +49170123
-```
 
-### Enable Email in 4 Steps
-
-```bash
-# 1. Configure IMAP/SMTP
-# Edit workspace/config.yml → email section
-
-# 2. Store password
-echo "app-password" > /atlas/workspace/secrets/email-password
-
-# 3. Create trigger (ask Claude):
-# "Create a persistent email handler trigger"
-
-# 4. Start services (add to crontab or supervisord):
-# /atlas/app/integrations/email-receiver.sh
-# /atlas/app/integrations/reply-delivery.sh
-```
-
-### Send an Email Directly
-
-```bash
-# Send a new email (SMTP must be configured):
-python3 /atlas/app/integrations/email/email-addon.py send recipient@example.com "Subject" "Body"
-
-# Reply to a thread:
+# Email
+python3 /atlas/app/integrations/email/email-addon.py send alice@x.com "Subject" "Body"
 python3 /atlas/app/integrations/email/email-addon.py reply <thread_id> "Reply body"
-
-# List threads:
 python3 /atlas/app/integrations/email/email-addon.py threads
 ```

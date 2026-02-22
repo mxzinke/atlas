@@ -8,6 +8,10 @@
 #   - Webhook: event group   → trigger.sh deploy-hook '{"ref":"main"}' 'repo-myapp'
 #   - No key + persistent    → uses "_default" (one global session per trigger)
 #   - Ephemeral triggers     → key is ignored, always a new session
+#
+# For persistent sessions: if the session is already running (IPC socket alive),
+# the message is injected directly into the running session via the Claude Code
+# IPC socket. No new process is spawned — the message arrives mid-run.
 set -euo pipefail
 
 TRIGGER_NAME="${1:?Usage: trigger.sh <trigger-name> [payload] [session-key]}"
@@ -59,31 +63,58 @@ if [ -n "$PAYLOAD" ]; then
   PROMPT=$(echo "$PROMPT" | sed "s|{{payload}}|${PAYLOAD}|g")
 fi
 
+# Update trigger stats
+sqlite3 "$DB" "UPDATE triggers SET last_run = datetime('now'), run_count = run_count + 1 WHERE name = '${TRIGGER_NAME//\'/\'\'}';"
+
+# --- Persistent session: try IPC socket injection first ---
+if [ "$SESSION_MODE" = "persistent" ]; then
+  EXISTING_SESSION=$(sqlite3 "$DB" \
+    "SELECT session_id FROM trigger_sessions WHERE trigger_name='${TRIGGER_NAME//\'/\'\'}' AND session_key='${SESSION_KEY//\'/\'\'}' LIMIT 1;" 2>/dev/null || echo "")
+
+  if [ -n "$EXISTING_SESSION" ]; then
+    SOCKET="/tmp/claudec-${EXISTING_SESSION}.sock"
+
+    if [ -S "$SOCKET" ]; then
+      # Session is running — inject message directly via IPC socket
+      INJECT_MSG="New message arrived:
+
+${PAYLOAD:-$PROMPT}
+
+Process this message using inbox_mark and reply_send."
+
+      if echo "$INJECT_MSG" | python3 -c "
+import socket, json, sys
+msg = sys.stdin.read()
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+s.sendall(json.dumps({'action': 'send', 'text': msg, 'submit': True}).encode() + b'\n')
+s.close()
+" "$SOCKET" 2>/dev/null; then
+        echo "[$(date)] Injected into running session $EXISTING_SESSION (key=$SESSION_KEY)" | tee -a "$LOG"
+        exit 0
+      fi
+      # Socket exists but connection failed — session is stale, fall through to spawn
+      echo "[$(date)] Stale socket for $EXISTING_SESSION, spawning new session" | tee -a "$LOG"
+    fi
+  fi
+fi
+
+echo "[$(date)] Trigger firing: $TRIGGER_NAME (mode=$SESSION_MODE, key=$SESSION_KEY, channel=$CHANNEL)" | tee -a "$LOG"
+
 # Build system prompt from template
 SYSTEM_PROMPT=""
 if [ -f "$PROMPT_TEMPLATE" ]; then
   SYSTEM_PROMPT=$(cat "$PROMPT_TEMPLATE" | sed "s|{{trigger_name}}|${TRIGGER_NAME}|g" | sed "s|{{channel}}|${CHANNEL}|g")
 fi
 
-# Update trigger stats
-sqlite3 "$DB" "UPDATE triggers SET last_run = datetime('now'), run_count = run_count + 1 WHERE name = '${TRIGGER_NAME//\'/\'\'}';"
-
-echo "[$(date)] Trigger firing: $TRIGGER_NAME (mode=$SESSION_MODE, key=$SESSION_KEY, channel=$CHANNEL)" | tee -a "$LOG"
-
 # Build Claude command
 CLAUDE_ARGS=(-p --max-turns 25)
 
-# Look up existing session for persistent triggers
-if [ "$SESSION_MODE" = "persistent" ]; then
-  EXISTING_SESSION=$(sqlite3 "$DB" \
-    "SELECT session_id FROM trigger_sessions WHERE trigger_name='${TRIGGER_NAME//\'/\'\'}' AND session_key='${SESSION_KEY//\'/\'\'}' LIMIT 1;" 2>/dev/null || echo "")
-
-  if [ -n "$EXISTING_SESSION" ]; then
-    CLAUDE_ARGS+=(--resume "$EXISTING_SESSION")
-    echo "[$(date)] Resuming session for key=$SESSION_KEY: $EXISTING_SESSION" | tee -a "$LOG"
-  else
-    echo "[$(date)] New persistent session for key=$SESSION_KEY" | tee -a "$LOG"
-  fi
+if [ "$SESSION_MODE" = "persistent" ] && [ -n "${EXISTING_SESSION:-}" ]; then
+  CLAUDE_ARGS+=(--resume "$EXISTING_SESSION")
+  echo "[$(date)] Resuming session for key=$SESSION_KEY: $EXISTING_SESSION" | tee -a "$LOG"
+elif [ "$SESSION_MODE" = "persistent" ]; then
+  echo "[$(date)] New persistent session for key=$SESSION_KEY" | tee -a "$LOG"
 fi
 
 # Combine system prompt + trigger prompt
