@@ -4,6 +4,12 @@ import { z } from "zod";
 import { mkdirSync, writeFileSync, closeSync, openSync } from "fs";
 import { getDb } from "./db";
 
+function syncCrontab(): void {
+  try {
+    Bun.spawnSync(["bun", "run", "/atlas/app/triggers/sync-crontab.ts"]);
+  } catch {}
+}
+
 const server = new McpServer({
   name: "inbox-mcp",
   version: "1.0.0",
@@ -185,6 +191,157 @@ server.tool(
 
     return {
       content: [{ type: "text" as const, text: JSON.stringify(stats, null, 2) }],
+    };
+  }
+);
+
+// --- Tool: trigger_list ---
+server.tool(
+  "trigger_list",
+  "Liste alle konfigurierten Trigger (cron, webhook, manual)",
+  {
+    type: z.string().optional().describe("Filter by type: cron, webhook, manual"),
+  },
+  async ({ type }) => {
+    const db = getDb();
+    let sql = "SELECT * FROM triggers";
+    const params: unknown[] = [];
+    if (type) {
+      sql += " WHERE type = ?";
+      params.push(type);
+    }
+    sql += " ORDER BY created_at ASC";
+    const rows = db.prepare(sql).all(...params);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(rows, null, 2) }],
+    };
+  }
+);
+
+// --- Tool: trigger_create ---
+server.tool(
+  "trigger_create",
+  "Erstelle einen neuen Trigger (cron, webhook oder manual). Bei Webhooks wird die URL: /api/webhook/<name>",
+  {
+    name: z.string().describe("Unique trigger slug (e.g. 'github-check', 'daily-report')"),
+    type: z.enum(["cron", "webhook", "manual"]).describe("Trigger type"),
+    description: z.string().optional().default("").describe("Human-readable description"),
+    channel: z.string().optional().default("internal").describe("Inbox channel for messages"),
+    schedule: z.string().optional().describe("Cron expression for type=cron (e.g. '0 * * * *')"),
+    webhook_secret: z.string().optional().describe("Secret for webhook validation (X-Webhook-Secret header)"),
+    prompt: z.string().optional().default("").describe("Prompt template. Use {{payload}} for webhook data"),
+  },
+  async ({ name, type, description, channel, schedule, webhook_secret, prompt }) => {
+    const db = getDb();
+
+    if (type === "cron" && !schedule) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Cron triggers require a schedule" }) }],
+      };
+    }
+
+    try {
+      db.prepare(
+        `INSERT INTO triggers (name, type, description, channel, schedule, webhook_secret, prompt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(name, type, description, channel, schedule ?? null, webhook_secret ?? null, prompt);
+    } catch (err: any) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }],
+      };
+    }
+
+    const trigger = db.prepare("SELECT * FROM triggers WHERE name = ?").get(name);
+
+    if (type === "cron") syncCrontab();
+
+    const info: Record<string, string> = {};
+    if (type === "webhook") {
+      info.webhook_url = `/api/webhook/${name}`;
+      info.hint = "Configure external service to POST to this URL. Payload becomes {{payload}} in prompt.";
+      if (webhook_secret) info.auth = "Set X-Webhook-Secret header to the configured secret.";
+    }
+
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ trigger, ...info }, null, 2) }],
+    };
+  }
+);
+
+// --- Tool: trigger_update ---
+server.tool(
+  "trigger_update",
+  "Aktualisiere einen bestehenden Trigger",
+  {
+    name: z.string().describe("Trigger name to update"),
+    description: z.string().optional().describe("New description"),
+    channel: z.string().optional().describe("New inbox channel"),
+    schedule: z.string().optional().describe("New cron schedule"),
+    webhook_secret: z.string().optional().describe("New webhook secret"),
+    prompt: z.string().optional().describe("New prompt template"),
+    enabled: z.boolean().optional().describe("Enable or disable trigger"),
+  },
+  async ({ name, description, channel, schedule, webhook_secret, prompt, enabled }) => {
+    const db = getDb();
+
+    const existing = db.prepare("SELECT * FROM triggers WHERE name = ?").get(name) as any;
+    if (!existing) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Trigger '${name}' not found` }) }],
+      };
+    }
+
+    const updates: string[] = [];
+    const params: unknown[] = [];
+
+    if (description !== undefined) { updates.push("description = ?"); params.push(description); }
+    if (channel !== undefined) { updates.push("channel = ?"); params.push(channel); }
+    if (schedule !== undefined) { updates.push("schedule = ?"); params.push(schedule); }
+    if (webhook_secret !== undefined) { updates.push("webhook_secret = ?"); params.push(webhook_secret); }
+    if (prompt !== undefined) { updates.push("prompt = ?"); params.push(prompt); }
+    if (enabled !== undefined) { updates.push("enabled = ?"); params.push(enabled ? 1 : 0); }
+
+    if (updates.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "No fields to update" }) }],
+      };
+    }
+
+    params.push(name);
+    db.prepare(`UPDATE triggers SET ${updates.join(", ")} WHERE name = ?`).run(...params);
+
+    const updated = db.prepare("SELECT * FROM triggers WHERE name = ?").get(name);
+
+    if (existing.type === "cron") syncCrontab();
+
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(updated, null, 2) }],
+    };
+  }
+);
+
+// --- Tool: trigger_delete ---
+server.tool(
+  "trigger_delete",
+  "Lösche einen Trigger",
+  {
+    name: z.string().describe("Trigger name to delete"),
+  },
+  async ({ name }) => {
+    const db = getDb();
+    const existing = db.prepare("SELECT * FROM triggers WHERE name = ?").get(name) as any;
+    if (!existing) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Trigger '${name}' not found` }) }],
+      };
+    }
+
+    db.prepare("DELETE FROM triggers WHERE name = ?").run(name);
+
+    if (existing.type === "cron") syncCrontab();
+
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ deleted: name, type: existing.type }) }],
     };
   }
 );

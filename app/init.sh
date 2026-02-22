@@ -88,9 +88,11 @@ echo "[$(date)] Phase 6: Database init"
 DB="$WORKSPACE/inbox/atlas.db"
 if [ ! -f "$DB" ]; then
   sqlite3 "$DB" << 'SQL'
+PRAGMA journal_mode = WAL;
+
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  channel TEXT NOT NULL CHECK(channel IN ('signal','email','web','internal')),
+  channel TEXT NOT NULL,
   sender TEXT,
   content TEXT NOT NULL,
   reply_to TEXT,
@@ -102,9 +104,16 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE TABLE IF NOT EXISTS triggers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type TEXT NOT NULL,
-  config TEXT DEFAULT '{}',
+  name TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL CHECK(type IN ('cron','webhook','manual')),
+  description TEXT DEFAULT '',
+  channel TEXT DEFAULT 'internal',
+  schedule TEXT,
+  webhook_secret TEXT,
+  prompt TEXT DEFAULT '',
   enabled INTEGER DEFAULT 1,
+  last_run TEXT,
+  run_count INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -115,12 +124,19 @@ CREATE TABLE IF NOT EXISTS signal_sessions (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- Default trigger: web (always active)
-INSERT INTO triggers (type, config, enabled) VALUES ('web', '{"port": 8080}', 1);
+-- Default trigger: daily cleanup
+INSERT INTO triggers (name, type, description, channel, schedule, prompt) VALUES (
+  'daily-cleanup',
+  'cron',
+  'Täglicher Memory-Flush und Session-Cleanup',
+  'internal',
+  '0 6 * * *',
+  ''
+);
 SQL
-  echo "  Database initialized"
+  echo "  Database initialized with new trigger schema"
 else
-  echo "  Database already exists"
+  echo "  Database already exists (migrations handled by inbox-mcp)"
 fi
 
 # ── Phase 7: User Extensions ──
@@ -178,8 +194,12 @@ SETTINGS
   echo "  Created Claude Code settings"
 fi
 
-# ── Phase 9: Start Services ──
-echo "[$(date)] Phase 9: Starting services"
+# ── Phase 9: Sync Crontab from Triggers ──
+echo "[$(date)] Phase 9: Crontab sync"
+bun run /atlas/app/triggers/sync-crontab.ts || echo "  ⚠ Crontab sync failed (non-fatal)"
+
+# ── Phase 10: Start Services ──
+echo "[$(date)] Phase 10: Starting services"
 supervisorctl start inbox-mcp || true
 sleep 1
 supervisorctl start qmd || true

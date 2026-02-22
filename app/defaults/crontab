@@ -1,12 +1,6 @@
 # Atlas Crontab (supercronic)
 # Zeitzone via TZ env-Variable im Container
 
-# Täglicher Session-Cleanup um 06:00
+# Täglicher Session-Cleanup um 06:00 (spezial: nutzt --max-turns und Session-Resume)
 0 6 * * *  /atlas/app/triggers/cron/daily-cleanup.sh
 
-# Beispiele (auskommentiert):
-# Wöchentlicher Status-Report jeden Montag um 08:00
-# 0 8 * * 1  /atlas/app/triggers/cron/event.sh weekly-report
-
-# Stündlicher GitHub-Check
-# 0 * * * *  /atlas/app/triggers/cron/event.sh github-check
