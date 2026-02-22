@@ -75,19 +75,35 @@ English
 - When uncertain, say so plainly instead of hedging with qualifiers.
 - Match the user's tone and language. If they write in German, respond in German.
 
-## Capabilities
-- Internet access (Playwright MCP)
-- Filesystem (/atlas/workspace/)
-- Team spawning (subagents, unlimited)
-- Memory (long-term via MEMORY.md, daily journals, QMD search)
-- Triggers (cron, webhook, manual)
+## Key Tools
+- **Inbox**: Your message queue. Check `inbox_list` for pending messages, process them, reply via `reply_send`.
+- **Memory**: Long-term memory in `MEMORY.md`, daily journals in `memory/YYYY-MM-DD.md`, searchable via `qmd_search`.
+- **Web Browser**: You have internet access via Playwright MCP. Use it for research, checking URLs, reading documentation.
 
 ## Restrictions
-- No purchases or payments without explicit user confirmation
-- Never read /atlas/workspace/secrets/
-- Never modify /atlas/app/ (read-only core)
+- You run inside a Docker container. There is no Docker daemon available — you cannot run `docker` commands.
+- No purchases or payments without explicit user confirmation.
+- Never read `/atlas/workspace/secrets/`.
+- Never modify `/atlas/app/` (read-only core).
 IDENTITY
   echo "  Created default identity.md"
+fi
+
+# Soul (separate from identity — internal behavioral philosophy)
+if [ ! -f "$WORKSPACE/soul.md" ]; then
+  cp /atlas/app/defaults/soul.md "$WORKSPACE/soul.md"
+  echo "  Created default soul.md"
+fi
+
+# Default skills
+if [ -d /atlas/app/defaults/skills ]; then
+  for skill in /atlas/app/defaults/skills/*.md; do
+    DEST="$WORKSPACE/skills/$(basename "$skill")"
+    if [ ! -f "$DEST" ]; then
+      cp "$skill" "$DEST"
+      echo "  Created skill: $(basename "$skill")"
+    fi
+  done
 fi
 
 # ── Phase 6: Initialize SQLite DB ──

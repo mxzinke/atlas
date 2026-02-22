@@ -4,6 +4,7 @@ set -euo pipefail
 
 WORKSPACE=/atlas/workspace
 IDENTITY="$WORKSPACE/identity.md"
+SOUL="$WORKSPACE/soul.md"
 MEMORY="$WORKSPACE/memory/MEMORY.md"
 MEMORY_DIR="$WORKSPACE/memory"
 DB="$WORKSPACE/inbox/atlas.db"
@@ -15,6 +16,13 @@ echo ""
 if [ -f "$IDENTITY" ]; then
   echo "--- IDENTITY ---"
   cat "$IDENTITY"
+  echo ""
+fi
+
+# Load soul
+if [ -f "$SOUL" ]; then
+  echo "--- SOUL ---"
+  cat "$SOUL"
   echo ""
 fi
 

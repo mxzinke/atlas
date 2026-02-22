@@ -145,10 +145,11 @@ Claude Code hooks inject context at lifecycle events. Hooks are shell scripts th
 ### SessionStart (`app/hooks/session-start.sh`)
 
 Runs when Claude wakes up. Outputs:
-1. **Identity** — Full `identity.md` (personality, capabilities)
-2. **Long-term memory** — Full `MEMORY.md`
-3. **Recent journals** — List of recent journal filenames with line counts (not full content)
-4. **Inbox status** — Number of pending messages
+1. **Identity** — Full `identity.md` (name, style, tools, restrictions)
+2. **Soul** — Full `soul.md` (behavioral philosophy, boundaries)
+3. **Long-term memory** — Full `MEMORY.md`
+4. **Recent journals** — List of recent journal filenames with line counts (not full content)
+5. **Inbox status** — Number of pending messages
 
 Does **not** inject config.yml (Claude can read it when needed).
 
@@ -178,7 +179,7 @@ Runs when a team member (subagent) finishes. Quality gate that prompts Claude to
 | 2 | Create workspace directories |
 | 3 | Copy default config.yml (if missing) |
 | 4 | Copy default crontab (if missing) |
-| 5 | Create default identity.md (if missing) |
+| 5 | Create default identity.md, soul.md, skills (if missing) |
 | 6 | Initialize SQLite database + seed default triggers |
 | 7 | Run user-extensions.sh (custom installs) |
 | 8 | Create Claude Code settings.json (hooks config) |
