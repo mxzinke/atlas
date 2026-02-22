@@ -1,15 +1,19 @@
 #!/bin/bash
-# Signal message receiver: polls signal-cli for new messages and routes to trigger
-# Runs as a supervised process (via supervisord or cron)
+# Signal message receiver: polls signal-cli, writes to inbox, fires trigger
+#
+# Flow:
+#   1. signal-cli receive --json → parse messages
+#   2. Write each message to inbox (channel=signal, reply_to=sender)
+#   3. Fire trigger.sh signal-chat <payload> <sender>
+#   4. Trigger session can reply_send(inbox_message_id) → delivery via signal-cli
 #
 # Prerequisites:
 #   1. signal-cli installed: apt-get install -y signal-cli
 #   2. signal-cli registered: signal-cli -a +YOUR_NUMBER register / verify
-#   3. Trigger created: trigger_create(name="signal-chat", type="webhook", session_mode="persistent", channel="signal")
+#   3. Trigger created: trigger_create(name="signal-chat", type="webhook",
+#      session_mode="persistent", channel="signal")
 #
 # Usage: signal-receiver.sh [--once]
-#   --once: process current messages and exit (for cron mode)
-#   default: continuous polling loop
 set -euo pipefail
 
 WORKSPACE=/atlas/workspace
@@ -60,8 +64,16 @@ is_whitelisted() {
   return 1
 }
 
+write_to_inbox() {
+  local sender="$1"
+  local content="$2"
+  # reply_to = sender number (used by reply-delivery to send back)
+  local msg_id
+  msg_id=$(sqlite3 "$DB" "INSERT INTO messages (channel, sender, content, reply_to) VALUES ('signal', '${sender//\'/\'\'}', '${content//\'/\'\'}', '${sender//\'/\'\'}'); SELECT last_insert_rowid();" 2>/dev/null || echo "0")
+  echo "$msg_id"
+}
+
 process_messages() {
-  # Receive pending messages as JSON
   local messages
   messages=$(signal-cli -a "$SIGNAL_NUMBER" receive --json 2>/dev/null || echo "")
 
@@ -70,30 +82,28 @@ process_messages() {
   fi
 
   echo "$messages" | while IFS= read -r line; do
-    # Skip empty lines
     [ -z "$line" ] && continue
 
-    # Extract sender and message body
-    local sender body timestamp
-    sender=$(echo "$line" | python3 -c "
+    # Extract fields via Python (handles JSON safely)
+    local parsed
+    parsed=$(echo "$line" | python3 -c "
 import sys, json
 msg = json.loads(sys.stdin.read())
 env = msg.get('envelope', {})
-print(env.get('source', env.get('sourceNumber', '')))" 2>/dev/null || echo "")
-    body=$(echo "$line" | python3 -c "
-import sys, json
-msg = json.loads(sys.stdin.read())
-dm = msg.get('envelope', {}).get('dataMessage', {})
-print(dm.get('message', ''))" 2>/dev/null || echo "")
-    timestamp=$(echo "$line" | python3 -c "
-import sys, json
-msg = json.loads(sys.stdin.read())
-print(msg.get('envelope', {}).get('timestamp', ''))" 2>/dev/null || echo "")
+dm = env.get('dataMessage', {})
+sender = env.get('source', env.get('sourceNumber', ''))
+body = dm.get('message', '')
+ts = env.get('timestamp', '')
+if sender and body:
+    print(json.dumps({'sender': sender, 'body': body, 'timestamp': str(ts)}))
+" 2>/dev/null || echo "")
 
-    # Skip empty messages (receipts, typing indicators)
-    if [ -z "$body" ] || [ -z "$sender" ]; then
-      continue
-    fi
+    [ -z "$parsed" ] && continue
+
+    local sender body timestamp
+    sender=$(echo "$parsed" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['sender'])")
+    body=$(echo "$parsed" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['body'])")
+    timestamp=$(echo "$parsed" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['timestamp'])")
 
     # Check whitelist
     if ! is_whitelisted "$sender"; then
@@ -103,17 +113,22 @@ print(msg.get('envelope', {}).get('timestamp', ''))" 2>/dev/null || echo "")
 
     echo "[$(date)] Signal message from $sender: ${body:0:80}..." | tee -a "$LOG"
 
-    # Build payload JSON
+    # 1. Write to inbox (so trigger session can reply_send on it)
+    local inbox_msg_id
+    inbox_msg_id=$(write_to_inbox "$sender" "$body")
+
+    # 2. Build payload with inbox message_id
     local payload
     payload=$(python3 -c "
-import json
+import json, sys
 print(json.dumps({
-  'sender': '$sender',
-  'message': $(python3 -c "import json; print(json.dumps('''$body'''))"),
-  'timestamp': '$timestamp'
-}))" 2>/dev/null || echo "{\"sender\":\"$sender\",\"message\":\"$body\"}")
+    'inbox_message_id': int('$inbox_msg_id'),
+    'sender': '$sender',
+    'message': $(echo "$body" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))"),
+    'timestamp': '$timestamp'
+}))" 2>/dev/null || echo "{\"inbox_message_id\":$inbox_msg_id,\"sender\":\"$sender\",\"message\":\"$body\"}")
 
-    # Fire trigger with sender as session key (persistent per-contact session)
+    # 3. Fire trigger with sender as session key
     /atlas/app/triggers/trigger.sh "$TRIGGER_NAME" "$payload" "$sender"
   done
 }

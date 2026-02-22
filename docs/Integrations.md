@@ -1,6 +1,6 @@
 # Integrations
 
-Atlas supports Signal and Email as communication channels. Each integration uses the trigger system: incoming messages spawn a trigger session (persistent, keyed per contact/thread) that can reply directly or escalate to the main session.
+Atlas supports Signal and Email as communication channels. Each integration writes incoming messages to the inbox, then spawns a trigger session (persistent, keyed per contact/thread) that can reply directly or escalate to the main session.
 
 ## Architecture
 
@@ -8,40 +8,48 @@ Atlas supports Signal and Email as communication channels. Each integration uses
 External Channel          Atlas
 ═══════════════           ═════
 
-Signal message ──▸ signal-receiver.sh ──▸ trigger.sh signal-chat <payload> <sender>
-                                                │
-                                          Trigger session
-                                          (persistent, per sender)
-                                                │
-                                    ┌───────────┴───────────┐
-                                    │                       │
-                               reply_send              inbox_write
-                                    │                  (escalate)
-                                    ▼                       │
-                            replies/N.json                  ▼
-                                    │               Main session
-                         reply-delivery.sh          (read/write)
-                                    │
-                                    ▼
-                            signal-cli send
+Signal message ──▸ signal-receiver.sh
+                    │
+                    ├─▸ INSERT INTO inbox (channel=signal, reply_to=sender)
+                    │
+                    └─▸ trigger.sh signal-chat <payload+inbox_msg_id> <sender>
+                                          │
+                                    Trigger session
+                                    (persistent, per sender)
+                                          │
+                              ┌───────────┴───────────┐
+                              │                       │
+                    reply_send(inbox_msg_id)      inbox_write
+                              │                  (escalate)
+                              ▼                       │
+                      replies/N.json                  ▼
+                              │               Main session
+                   reply-delivery.sh
+                              │
+                              ▼
+                      signal-cli send
 
 
-Email (IMAP) ──▸ email-poller.py ──▸ trigger.sh email-handler <payload> <thread-id>
-                                                │
-                                          Trigger session
-                                          (persistent, per thread)
-                                                │
-                                    ┌───────────┴───────────┐
-                                    │                       │
-                               reply_send              inbox_write
-                                    │                  (escalate)
-                                    ▼                       │
-                            replies/N.json                  ▼
-                                    │               Main session
-                         reply-delivery.sh          (read/write)
-                                    │
-                                    ▼
-                             SMTP sendmail
+Email (IMAP) ──▸ email-poller.py
+                    │
+                    ├─▸ UPDATE email-threads/<thread_id>.json (thread state)
+                    ├─▸ INSERT INTO inbox (channel=email, reply_to=thread_id)
+                    │
+                    └─▸ trigger.sh email-handler <payload+inbox_msg_id> <thread_id>
+                                          │
+                                    Trigger session
+                                    (persistent, per thread)
+                                          │
+                              ┌───────────┴───────────┐
+                              │                       │
+                    reply_send(inbox_msg_id)      inbox_write
+                              │                  (escalate)
+                              ▼                       │
+                      replies/N.json                  ▼
+                              │               Main session
+                   reply-delivery.sh
+                      ├─▸ email-send.py reads email-threads/<thread_id>.json
+                      └─▸ SMTP with In-Reply-To + References headers
 ```
 
 ## Signal
@@ -81,9 +89,8 @@ trigger_create:
 
     {{payload}}
 
-    You are chatting with this person via Signal. Respond conversationally.
-    If they ask for something complex (code changes, research, long tasks),
-    escalate to main session via inbox_write and let them know you'll get back to them.
+    The payload contains inbox_message_id. Use inbox_mark to claim it,
+    then reply_send to respond. Escalate complex tasks via inbox_write.
 ```
 
 **3. Start receiver** (add to supervisord or crontab):
@@ -104,11 +111,12 @@ trigger_create:
 
 ### How It Works
 
-1. `signal-receiver.sh` polls `signal-cli receive --json` for new messages
-2. Each message fires `trigger.sh signal-chat '<json>' '<sender-number>'`
-3. Session key = sender phone number → persistent session per contact
-4. Trigger session responds via `reply_send` → writes to `replies/N.json`
-5. `reply-delivery.sh` picks up the JSON and sends via `signal-cli send`
+1. `signal-receiver.sh` polls `signal-cli receive --json`
+2. Each message is written to the inbox (channel=signal, reply_to=sender number)
+3. `trigger.sh signal-chat '<payload>' '<sender>'` fires with `inbox_message_id` in payload
+4. Trigger session calls `inbox_mark(inbox_message_id, "processing")` then `reply_send(inbox_message_id, "response")`
+5. `reply_send` writes `replies/N.json` with `reply_to=<sender number>`
+6. `reply-delivery.sh` sends via `signal-cli send -m <content> <sender>`
 
 ### Whitelist
 
@@ -160,10 +168,8 @@ trigger_create:
 
     {{payload}}
 
-    You are responding to an email thread. Be professional and concise.
-    If the email asks for complex work (code changes, deployments, research),
-    escalate to main session via inbox_write. Reply with a brief acknowledgment
-    and let them know it's being handled.
+    The payload contains inbox_message_id. Use inbox_mark to claim it,
+    then reply_send to respond. Escalate complex tasks via inbox_write.
 ```
 
 **4. Start poller** (cron or continuous):
@@ -182,14 +188,41 @@ trigger_create:
 /atlas/app/integrations/reply-delivery.sh
 ```
 
-### Thread Tracking
+### Email Thread Tracking
 
-Emails are threaded by `In-Reply-To` / `References` / `Message-ID` headers:
+Thread state is stored per-thread at `workspace/inbox/email-threads/<thread_id>.json`:
 
-- Reply to an existing thread → same session key → resumes conversation
-- New email without references → new session key → new conversation
+```json
+{
+  "thread_id": "abc123_mail.com",
+  "subject": "Project Update",
+  "last_message_id": "<789@mail.com>",
+  "references": ["<abc@mail.com>", "<def@mail.com>", "<789@mail.com>"],
+  "last_sender": "alice@example.com",
+  "participants": ["alice@example.com", "bob@example.com"],
+  "updated_at": "2026-02-22T10:30:00"
+}
+```
 
-The session key is a sanitized version of the thread's root Message-ID. This means the trigger session has full conversational context across all replies in a thread.
+**Incoming**: `email-poller.py` updates the thread state on every new email — extracting `Message-ID`, building the `References` chain, tracking participants.
+
+**Outgoing**: `email-send.py` reads the thread state to construct proper headers:
+- `In-Reply-To`: the `last_message_id` (what we're replying to)
+- `References`: the accumulated chain (preserves thread in all mail clients)
+- `Subject`: `Re: <original subject>`
+- `To`: `last_sender` (the person who sent the most recent message)
+
+After sending, `email-send.py` appends its own `Message-ID` to the references chain so subsequent replies stay threaded.
+
+**Thread ID derivation** from email headers:
+
+| Header Present | Thread ID Source |
+|----------------|-----------------|
+| `References` | First entry (thread root Message-ID) |
+| `In-Reply-To` only | That Message-ID |
+| Neither | Own `Message-ID` (new thread) |
+
+This means all emails in a thread share the same session key → same persistent trigger session → full conversational context.
 
 ### Whitelist
 
@@ -197,21 +230,21 @@ The session key is a sanitized version of the thread's root Message-ID. This mea
 
 ## Reply Delivery
 
-Both Signal and Email use the same reply delivery mechanism:
+Both Signal and Email use the same delivery mechanism:
 
-1. Trigger session calls `reply_send(message_id, content)`
+1. Trigger session calls `reply_send(inbox_message_id, content)`
 2. inbox-mcp writes `workspace/inbox/replies/<message_id>.json`:
    ```json
    {
-     "channel": "signal",
-     "reply_to": "+491701234567",
+     "channel": "email",
+     "reply_to": "abc123_mail.com",
      "content": "Here's what I found...",
      "timestamp": "2026-02-22T10:30:00Z"
    }
    ```
 3. `reply-delivery.sh` picks up the file and routes by channel:
-   - `signal` → `signal-cli send`
-   - `email` → SMTP
+   - `signal` → `signal-cli send -m <content> <reply_to>`
+   - `email` → `email-send.py` reads thread state, sends SMTP with proper headers
 4. Delivered files are moved to `replies/archive/`
 
 Start the delivery daemon:
@@ -219,9 +252,6 @@ Start the delivery daemon:
 ```bash
 # Continuous (recommended):
 /atlas/app/integrations/reply-delivery.sh
-
-# Or via cron (every 30 seconds is not possible, use continuous):
-* * * * *  /atlas/app/integrations/reply-delivery.sh --once
 ```
 
 ## Quick Reference

@@ -23,17 +23,6 @@ print(cfg.get('signal', {}).get('number', ''))
 " 2>/dev/null || echo "")
 fi
 
-# Read SMTP config from config
-read_email_config() {
-  python3 -c "
-import yaml, json
-with open('$CONFIG') as f:
-  cfg = yaml.safe_load(f)
-email_cfg = cfg.get('email', {})
-print(json.dumps(email_cfg))
-" 2>/dev/null || echo "{}"
-}
-
 deliver_signal() {
   local reply_to="$1"
   local content="$2"
@@ -53,53 +42,11 @@ deliver_signal() {
 }
 
 deliver_email() {
-  local reply_to="$1"
-  local content="$2"
+  local reply_file="$1"
 
-  python3 -c "
-import smtplib, json, yaml, sys
-from email.mime.text import MIMEText
-from pathlib import Path
-
-config_path = '$CONFIG'
-reply_to = '$reply_to'
-content = '''$content'''
-
-try:
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-    email_cfg = cfg.get('email', {})
-except:
-    print('ERROR: Could not read email config', file=sys.stderr)
-    sys.exit(1)
-
-smtp_host = email_cfg.get('smtp_host', '')
-smtp_port = int(email_cfg.get('smtp_port', 587))
-username = email_cfg.get('username', '')
-password = ''
-password_file = email_cfg.get('password_file', '')
-if password_file and Path(password_file).exists():
-    password = Path(password_file).read_text().strip()
-
-if not smtp_host or not username or not password:
-    print('ERROR: SMTP not configured', file=sys.stderr)
-    sys.exit(1)
-
-msg = MIMEText(content)
-msg['From'] = username
-msg['To'] = reply_to
-msg['Subject'] = 'Re: Atlas Response'
-
-try:
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        server.login(username, password)
-        server.send_message(msg)
-    print(f'Email reply delivered to {reply_to}')
-except Exception as e:
-    print(f'ERROR: SMTP delivery failed: {e}', file=sys.stderr)
-    sys.exit(1)
-" 2>&1 | tee -a "$LOG"
+  # Delegate to email-send.py which reads thread state for proper
+  # In-Reply-To and References headers
+  python3 /atlas/app/integrations/email-send.py "$reply_file" 2>&1 | tee -a "$LOG"
 }
 
 process_replies() {
@@ -128,18 +75,18 @@ process_replies() {
         fi
         ;;
       email)
-        if deliver_email "$reply_to" "$content"; then
+        # Pass the whole file — email-send.py reads thread state for headers
+        if deliver_email "$reply_file"; then
           success=true
         fi
         ;;
       *)
         echo "[$(date)] Unknown channel '$channel' in $reply_file" | tee -a "$LOG"
-        success=true  # Remove unknown channel replies
+        success=true
         ;;
     esac
 
     if [ "$success" = "true" ]; then
-      # Move to archive instead of deleting
       local archive_dir="$REPLIES_DIR/archive"
       mkdir -p "$archive_dir"
       mv "$reply_file" "$archive_dir/" 2>/dev/null || rm -f "$reply_file"
