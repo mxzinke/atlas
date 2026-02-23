@@ -85,8 +85,8 @@ RUN bun install
 WORKDIR /atlas/app/web-ui
 RUN bun install
 
-# Install QMD globally
-RUN bun install -g @tobilu/qmd || npm install -g @tobilu/qmd || true
+# Install QMD globally (use npm so binary goes to /usr/local/bin, surviving /root volume mount)
+RUN npm install -g @tobilu/qmd || true
 
 # Copy supervisord config
 COPY supervisord.conf /etc/supervisor/conf.d/atlas.conf
