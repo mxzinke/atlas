@@ -89,7 +89,7 @@ if [ "$SESSION_MODE" = "persistent" ]; then
       # Session is running — inject message directly via IPC socket
       # Load channel-specific inject template
       INJECT_TEMPLATE=""
-      for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-inject.md" "$PROMPT_DIR/trigger-session-inject.md"; do
+      for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-inject.md" "$PROMPT_DIR/trigger-inject.md"; do
         if [ -f "$candidate" ]; then
           INJECT_TEMPLATE="$candidate"
           break
@@ -129,20 +129,28 @@ fi
 
 echo "[$(date)] Trigger firing: $TRIGGER_NAME (mode=$SESSION_MODE, key=$SESSION_KEY, channel=$CHANNEL)" | tee -a "$LOG"
 
-# Build system prompt from channel-specific template (fallback to generic)
-PROMPT_TEMPLATE=""
-for candidate in "$PROMPT_DIR/trigger-${CHANNEL}.md" "$PROMPT_DIR/trigger-session.md"; do
-  if [ -f "$candidate" ]; then
-    PROMPT_TEMPLATE="$candidate"
-    break
-  fi
-done
-
+# Build system prompt: base + optional channel addon
 SYSTEM_PROMPT=""
-if [ -n "$PROMPT_TEMPLATE" ]; then
+if [ -f "$PROMPT_DIR/trigger-base.md" ]; then
   SYSTEM_PROMPT=$(safe_replace "{{trigger_name}}" "$TRIGGER_NAME" \
                                "{{channel}}" "$CHANNEL" \
-                               < "$PROMPT_TEMPLATE")
+                               < "$PROMPT_DIR/trigger-base.md")
+fi
+
+CHANNEL_ADDON_FILE="$PROMPT_DIR/trigger-channel-${CHANNEL}.md"
+if [ -f "$CHANNEL_ADDON_FILE" ]; then
+  CHANNEL_ADDON=$(safe_replace "{{trigger_name}}" "$TRIGGER_NAME" \
+                                "{{channel}}" "$CHANNEL" \
+                                < "$CHANNEL_ADDON_FILE")
+  if [ -n "$SYSTEM_PROMPT" ]; then
+    SYSTEM_PROMPT="${SYSTEM_PROMPT}
+
+---
+
+${CHANNEL_ADDON}"
+  else
+    SYSTEM_PROMPT="$CHANNEL_ADDON"
+  fi
 fi
 
 # Build Claude command
