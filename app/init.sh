@@ -165,6 +165,10 @@ fi
 echo "[$(date)] Phase 8: Claude Code settings (from config.yml)"
 bun run /atlas/app/hooks/generate-settings.ts || echo "  ⚠ Settings generation failed (non-fatal)"
 
+# Symlink MCP config so Claude Code discovers servers in the workspace
+ln -sf /atlas/app/.mcp.json "$WORKSPACE/.mcp.json"
+echo "  MCP config symlinked: $WORKSPACE/.mcp.json -> /atlas/app/.mcp.json"
+
 # ── Phase 9: Sync Crontab from Triggers ──
 echo "[$(date)] Phase 9: Crontab sync"
 bun run /atlas/app/triggers/sync-crontab.ts || echo "  ⚠ Crontab sync failed (non-fatal)"
