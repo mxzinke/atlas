@@ -76,7 +76,8 @@ COPY app/ /atlas/app/
 COPY .claude/settings.json /atlas/app/.claude/settings.json
 
 # Set execute permissions
-RUN chmod +x /atlas/app/init.sh \
+RUN chmod +x /atlas/app/entrypoint.sh \
+    && chmod +x /atlas/app/init.sh \
     && chmod +x /atlas/app/hooks/*.sh \
     && chmod +x /atlas/app/watcher.sh \
     && chmod +x /atlas/app/triggers/cron/*.sh \
