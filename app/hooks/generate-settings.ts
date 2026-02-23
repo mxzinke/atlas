@@ -78,8 +78,7 @@ const settings: Record<string, unknown> = {
       "Grep",
       "WebFetch",
       "WebSearch",
-      "mcp__inbox__*",
-      "mcp__qmd__*",
+      "mcp__*",
     ],
   },
   hooks: {
