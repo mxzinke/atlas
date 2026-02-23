@@ -3,8 +3,8 @@
 set -euo pipefail
 
 WORKSPACE=/atlas/workspace
-IDENTITY="$WORKSPACE/identity.md"
-SOUL="$WORKSPACE/soul.md"
+IDENTITY="$WORKSPACE/IDENTITY.md"
+SOUL="$WORKSPACE/SOUL.md"
 MEMORY="$WORKSPACE/memory/MEMORY.md"
 MEMORY_DIR="$WORKSPACE/memory"
 DB="$WORKSPACE/inbox/atlas.db"
@@ -20,17 +20,7 @@ emit_section() {
   fi
 }
 
-# --- Trigger session ---
-if [ -n "${ATLAS_TRIGGER:-}" ]; then
-  emit_section "$IDENTITY" "identity"
-  emit_section "$SOUL" "soul"
-  emit_section "$MEMORY" "long-term-memory"
-  exit 0
-fi
-
-# --- Main session ---
-emit_section "$IDENTITY" "identity"
-emit_section "$SOUL" "soul"
+# Only emit memory context here (not part of system prompt)
 emit_section "$MEMORY" "long-term-memory"
 
 # Show recent journal entries (titles only)

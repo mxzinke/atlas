@@ -137,30 +137,6 @@ fi
 
 echo "[$(date)] Trigger firing: $TRIGGER_NAME (mode=$SESSION_MODE, key=$SESSION_KEY, channel=$CHANNEL)" | tee -a "$LOG"
 
-# Build system prompt: base + optional channel addon
-SYSTEM_PROMPT=""
-if [ -f "$PROMPT_DIR/trigger-base.md" ]; then
-  SYSTEM_PROMPT=$(safe_replace "{{trigger_name}}" "$TRIGGER_NAME" \
-                               "{{channel}}" "$CHANNEL" \
-                               < "$PROMPT_DIR/trigger-base.md")
-fi
-
-CHANNEL_ADDON_FILE="$PROMPT_DIR/trigger-channel-${CHANNEL}.md"
-if [ -f "$CHANNEL_ADDON_FILE" ]; then
-  CHANNEL_ADDON=$(safe_replace "{{trigger_name}}" "$TRIGGER_NAME" \
-                                "{{channel}}" "$CHANNEL" \
-                                < "$CHANNEL_ADDON_FILE")
-  if [ -n "$SYSTEM_PROMPT" ]; then
-    SYSTEM_PROMPT="${SYSTEM_PROMPT}
-
----
-
-${CHANNEL_ADDON}"
-  else
-    SYSTEM_PROMPT="$CHANNEL_ADDON"
-  fi
-fi
-
 # Build Claude command
 disable_remote_mcp
 CLAUDE_ARGS=(-p --dangerously-skip-permissions)
@@ -172,25 +148,14 @@ elif [ "$SESSION_MODE" = "persistent" ]; then
   echo "[$(date)] New persistent session for key=$SESSION_KEY" | tee -a "$LOG"
 fi
 
-# Combine system prompt + trigger prompt
-FULL_PROMPT=""
-if [ -n "$SYSTEM_PROMPT" ]; then
-  FULL_PROMPT="${SYSTEM_PROMPT}
-
----
-
-${PROMPT}"
-else
-  FULL_PROMPT="$PROMPT"
-fi
-
 # Spawn trigger's own Claude session
 # ATLAS_TRIGGER env var tells hooks this is a trigger session (read-only)
+# claude-atlas wrapper injects system prompt based on --mode trigger
 # Use --output-format json to reliably capture the session ID (avoids race with concurrent triggers)
 TRIGGER_OUT=$(mktemp /tmp/trigger-out-XXXXXX.json)
 
 ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
-  claude "${CLAUDE_ARGS[@]}" --output-format json "$FULL_PROMPT" > "$TRIGGER_OUT" 2>>"$LOG" || true
+  claude-atlas --mode trigger "${CLAUDE_ARGS[@]}" --output-format json "$PROMPT" > "$TRIGGER_OUT" 2>>"$LOG" || true
 
 # Log the text result from JSON output
 python3 -c "

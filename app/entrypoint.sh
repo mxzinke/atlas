@@ -12,5 +12,8 @@ chown atlas:atlas /var/run
 mkdir -p /var/log/nginx /var/lib/nginx/body
 chown -R atlas:atlas /var/log/nginx /var/lib/nginx
 
+# Clean up stale QMD PID files from previous runs
+rm -f /home/atlas/.cache/qmd/*.pid /tmp/qmd*.pid 2>/dev/null || true
+
 # Drop to atlas user and start supervisord
 exec sudo -u atlas -E /usr/bin/supervisord -c /etc/supervisor/conf.d/atlas.conf
