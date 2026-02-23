@@ -13,9 +13,37 @@ if [ "${ATLAS_CLEANUP:-}" = "1" ]; then
   exit 0
 fi
 
-# Trigger session mode — messages are injected via IPC socket during the run,
-# no stop-hook polling needed. Just exit cleanly.
+# Trigger session mode
 if [ -n "${ATLAS_TRIGGER:-}" ]; then
+  AWAIT_FILE="/tmp/trigger-${ATLAS_TRIGGER}-await"
+
+  if [ -f "$AWAIT_FILE" ]; then
+    TASK_ID=$(cat "$AWAIT_FILE" | tr -d '[:space:]')
+    STATUS=$(sqlite3 "$DB" "SELECT status FROM messages WHERE id=${TASK_ID};" 2>/dev/null || echo "")
+    SUMMARY=$(sqlite3 "$DB" "SELECT response_summary FROM messages WHERE id=${TASK_ID};" 2>/dev/null || echo "")
+
+    if [ "$STATUS" = "done" ]; then
+      rm -f "$AWAIT_FILE"
+      {
+        echo "--- TASK #${TASK_ID} COMPLETED ---"
+        echo ""
+        echo "$SUMMARY"
+        echo ""
+        echo "Relay this result to the original sender now."
+      } >&2
+      exit 2
+    else
+      # Task still in progress — sleep and check again next turn
+      sleep 5
+      {
+        echo "--- AWAITING TASK #${TASK_ID} ---"
+        echo "Status: ${STATUS:-pending}. Still waiting for the worker to complete."
+        echo "Check again."
+      } >&2
+      exit 2
+    fi
+  fi
+
   exit 0
 fi
 
@@ -53,7 +81,7 @@ if [ -f "$DB" ]; then
         echo "--- NEW INBOX MESSAGE ---"
         echo "$NEXT_MSG"
         echo ""
-        echo "Process this message. Use inbox_mark to set status to 'processing', handle it, then reply via CLI (signal send / email reply) and mark done."
+        echo "Process this message. Use inbox_mark to set status to 'processing', do the work, then mark done with a response_summary that clearly describes the result — the trigger session will relay it back to the original sender."
         echo "$((PENDING - 1)) more messages pending in the inbox."
       } >&2
       exit 2

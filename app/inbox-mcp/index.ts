@@ -94,6 +94,59 @@ server.tool(
   }
 );
 
+// --- Tool: inbox_get ---
+server.tool(
+  "inbox_get",
+  "Get a specific message by ID (use to check task status and result)",
+  {
+    message_id: z.number().describe("ID of the message to retrieve"),
+  },
+  async ({ message_id }) => {
+    const db = getDb();
+    const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(message_id);
+    if (!message) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Message ${message_id} not found` }) }],
+      };
+    }
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(message, null, 2) }],
+    };
+  }
+);
+
+// --- Tool: inbox_await ---
+server.tool(
+  "inbox_await",
+  "Register that this trigger session is awaiting a task result. The session will be kept alive and notified when the task completes.",
+  {
+    message_id: z.number().describe("ID of the task message to await (returned by inbox_write)"),
+    trigger_name: z.string().describe("Name of this trigger (used to route the result back)"),
+  },
+  async ({ message_id, trigger_name }) => {
+    const db = getDb();
+    const message = db.prepare("SELECT id, status FROM messages WHERE id = ?").get(message_id) as { id: number; status: string } | undefined;
+    if (!message) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Message ${message_id} not found` }) }],
+      };
+    }
+
+    // Write await file — stop hook polls this to keep the session alive
+    const awaitPath = `/tmp/trigger-${trigger_name}-await`;
+    await Bun.write(awaitPath, String(message_id));
+
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({
+        awaiting: message_id,
+        trigger: trigger_name,
+        current_status: message.status,
+        note: "Session will be kept alive. You will be notified when the task completes.",
+      }, null, 2) }],
+    };
+  }
+);
+
 // --- Tool: inbox_stats ---
 server.tool(
   "inbox_stats",
