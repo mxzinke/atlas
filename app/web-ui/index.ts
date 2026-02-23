@@ -1,39 +1,77 @@
 import { Hono } from "hono";
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, closeSync, openSync, statSync } from "fs";
+import {
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  existsSync,
+  mkdirSync,
+  closeSync,
+  openSync,
+  statSync,
+} from "fs";
 import { join, resolve } from "path";
 import { getDb } from "../inbox-mcp/db";
 
 // --- Config ---
 const WS = "/atlas/workspace";
 const MEMORY = `${WS}/memory`;
-const IDENTITY = `${WS}/identity.md`;
+const IDENTITY = `${WS}/IDENTITY.md`;
 const CONFIG = `${WS}/config.yml`;
 const EXTENSIONS = `${WS}/user-extensions.sh`;
 const LOCK = `${WS}/.session-running`;
 const WAKE = `${WS}/inbox/.wake`;
 
 function syncCrontab(): void {
-  try { Bun.spawnSync(["bun", "run", "/atlas/app/triggers/sync-crontab.ts"]); } catch {}
+  try {
+    Bun.spawnSync(["bun", "run", "/atlas/app/triggers/sync-crontab.ts"]);
+  } catch {}
 }
 
 const db = getDb();
 
 // --- Helpers ---
 function safe(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function readFile(p: string): string {
-  try { return readFileSync(p, "utf-8"); } catch { return ""; }
+  try {
+    return readFileSync(p, "utf-8");
+  } catch {
+    return "";
+  }
 }
 
 function channelIcon(ch: string): string {
-  const icons: Record<string, string> = { signal: "S", email: "@", web: "W", internal: "I" };
+  const icons: Record<string, string> = {
+    signal: "S",
+    email: "@",
+    web: "W",
+    internal: "I",
+    task: "T",
+  };
   return icons[ch] || "?";
 }
 
+function getMessageSource(m: any): { type: string; label: string; isTrigger: boolean } {
+  if (m.channel === 'task' && m.sender?.startsWith('trigger:')) {
+    return { type: 'trigger', label: m.sender.replace('trigger:', ''), isTrigger: true };
+  }
+  return { type: m.channel, label: m.channel, isTrigger: false };
+}
+
 function statusColor(s: string): string {
-  return s === "pending" ? "#ff9800" : s === "processing" ? "#5c9cf5" : s === "cancelled" ? "#999" : "#4caf50";
+  return s === "pending"
+    ? "#ff9800"
+    : s === "processing"
+      ? "#5c9cf5"
+      : s === "cancelled"
+        ? "#999"
+        : "#4caf50";
 }
 
 function timeAgo(dt: string): string {
@@ -48,7 +86,12 @@ function timeAgo(dt: string): string {
 }
 
 // --- Layout ---
-function layout(title: string, content: string, active: string = "", mainStyle: string = ""): string {
+function layout(
+  title: string,
+  content: string,
+  active: string = "",
+  mainStyle: string = "",
+): string {
   const nav = [
     ["/", "Dashboard", "dashboard"],
     ["/inbox", "Inbox", "inbox"],
@@ -59,9 +102,12 @@ function layout(title: string, content: string, active: string = "", mainStyle: 
     ["/chat", "Chat", "chat"],
     ["/settings", "Settings", "settings"],
   ];
-  const links = nav.map(([href, label, id]) =>
-    `<a href="${href}" class="${active === id ? "active" : ""}">${label}</a>`
-  ).join("");
+  const links = nav
+    .map(
+      ([href, label, id]) =>
+        `<a href="${href}" class="${active === id ? "active" : ""}">${label}</a>`,
+    )
+    .join("");
 
   return `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -137,54 +183,92 @@ const app = new Hono();
 // ============ DASHBOARD ============
 app.get("/", (c) => {
   const sessionRunning = existsSync(LOCK);
-  const statusCounts = db.prepare("SELECT status, COUNT(*) as c FROM messages GROUP BY status").all() as any[];
-  const counts: Record<string, number> = {};
-  let total = 0;
-  for (const row of statusCounts) { counts[row.status] = row.c; total += row.c; }
-  const pending = counts["pending"] || 0;
-  const done = counts["done"] || 0;
+
+  // Task statistics
+  const taskStatusCounts = db
+    .prepare("SELECT status, COUNT(*) as c FROM messages WHERE channel='task' GROUP BY status")
+    .all() as any[];
+  const taskCounts: Record<string, number> = {};
+  for (const row of taskStatusCounts) {
+    taskCounts[row.status] = row.c;
+  }
+
+  // Active tasks (pending or processing)
+  const activeTasks = db
+    .prepare("SELECT * FROM messages WHERE channel='task' AND status IN ('pending', 'processing') ORDER BY created_at DESC LIMIT 10")
+    .all() as any[];
+
+  // Recent completed tasks (done or cancelled)
+  const recentCompleted = db
+    .prepare("SELECT * FROM messages WHERE channel='task' AND status IN ('done', 'cancelled') ORDER BY created_at DESC LIMIT 5")
+    .all() as any[];
 
   // Recent journal files (YYYY-MM-DD.md directly in memory/)
   let journals: string[] = [];
   if (existsSync(MEMORY)) {
     journals = readdirSync(MEMORY)
-      .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-      .sort().reverse().slice(0, 5);
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+      .sort()
+      .reverse()
+      .slice(0, 5);
   }
-
-  // Recent messages
-  const recent = db.prepare("SELECT * FROM messages ORDER BY created_at DESC LIMIT 5").all() as any[];
 
   const html = `
     <h1>Dashboard</h1>
     <div class="grid">
       <div class="stat">
-        <div class="num" style="color:${sessionRunning ? '#4caf50' : '#999'}">${sessionRunning ? "ON" : "OFF"}</div>
+        <div class="num" style="color:${sessionRunning ? "#4caf50" : "#999"}">${sessionRunning ? "ON" : "OFF"}</div>
         <div class="label">Session</div>
       </div>
-      <div class="stat"><div class="num">${pending}</div><div class="label">Pending</div></div>
-      <div class="stat"><div class="num">${done}</div><div class="label">Done</div></div>
-      <div class="stat"><div class="num">${total}</div><div class="label">Total Messages</div></div>
+      <div class="stat"><div class="num" style="color:#ff9800">${taskCounts["pending"] || 0}</div><div class="label">Pending</div></div>
+      <div class="stat"><div class="num" style="color:#5c9cf5">${taskCounts["processing"] || 0}</div><div class="label">Processing</div></div>
+      <div class="stat"><div class="num" style="color:#4caf50">${taskCounts["done"] || 0}</div><div class="label">Done</div></div>
+      <div class="stat"><div class="num" style="color:#999">${taskCounts["cancelled"] || 0}</div><div class="label">Cancelled</div></div>
     </div>
 
-    <div class="card"><h3>Recent Messages</h3>
-    ${recent.length === 0 ? '<div class="text-muted">No messages yet.</div>' : `<table>
-      <tr><th>CH</th><th>Sender</th><th>Content</th><th>Status</th><th>Time</th></tr>
-      ${recent.map(m => `<tr>
-        <td><span class="ch-icon">${channelIcon(m.channel)}</span></td>
-        <td>${safe(m.sender || "-")}</td>
-        <td>${safe((m.content || "").slice(0, 60))}${m.content?.length > 60 ? "..." : ""}</td>
-        <td><span class="badge" style="background:${statusColor(m.status)}20;color:${statusColor(m.status)}">${m.status}</span></td>
-        <td class="text-muted">${timeAgo(m.created_at)}</td>
-      </tr>`).join("")}
-    </table>`}</div>
+    ${activeTasks.length > 0 ? `
+    <div class="card"><h3>Active Tasks</h3>
+    <table>
+      <tr><th>ID</th><th>Source</th><th>Content</th><th>Status</th><th>Time</th></tr>
+      ${activeTasks.map((t) => {
+        const source = getMessageSource(t);
+        return `<tr>
+        <td>#${t.id}</td>
+        <td>${source.isTrigger ? `<span class="badge" style="background:#7c6ef020;color:#7c6ef0">${safe(source.label)}</span>` : safe(source.label)}</td>
+        <td>${safe((t.content || "").slice(0, 60))}${t.content?.length > 60 ? "..." : ""}</td>
+        <td><span class="badge" style="background:${statusColor(t.status)}20;color:${statusColor(t.status)}">${t.status}</span></td>
+        <td class="text-muted">${timeAgo(t.created_at)}</td>
+      </tr>`;
+      }).join("")}
+    </table></div>` : ""}
+
+    ${recentCompleted.length > 0 ? `
+    <div class="card"><h3>Recent Completed Tasks</h3>
+    <table>
+      <tr><th>ID</th><th>Source</th><th>Content</th><th>Status</th><th>Time</th></tr>
+      ${recentCompleted.map((t) => {
+        const source = getMessageSource(t);
+        return `<tr>
+        <td>#${t.id}</td>
+        <td>${source.isTrigger ? `<span class="badge" style="background:#7c6ef020;color:#7c6ef0">${safe(source.label)}</span>` : safe(source.label)}</td>
+        <td>${safe((t.content || "").slice(0, 60))}${t.content?.length > 60 ? "..." : ""}</td>
+        <td><span class="badge" style="background:${statusColor(t.status)}20;color:${statusColor(t.status)}">${t.status}</span></td>
+        <td class="text-muted">${timeAgo(t.created_at)}</td>
+      </tr>`;
+      }).join("")}
+    </table></div>` : ""}
 
     <div class="card"><h3>Recent Journals</h3>
-    ${journals.length === 0 ? '<div class="text-muted">No journal entries yet.</div>' :
-      `<ul style="list-style:none">${journals.map(j => {
-        const d = j.replace(".md", "");
-        return `<li style="padding:4px 0"><a href="/journal?date=${d}" style="color:#7c6ef0;text-decoration:none">${d}</a></li>`;
-      }).join("")}</ul>`}
+    ${
+      journals.length === 0
+        ? '<div class="text-muted">No journal entries yet.</div>'
+        : `<ul style="list-style:none">${journals
+            .map((j) => {
+              const d = j.replace(".md", "");
+              return `<li style="padding:4px 0"><a href="/journal?date=${d}" style="color:#7c6ef0;text-decoration:none">${d}</a></li>`;
+            })
+            .join("")}</ul>`
+    }
     </div>`;
 
   return c.html(layout("Dashboard", html, "dashboard"));
@@ -200,7 +284,11 @@ app.get("/inbox", (c) => {
   let countSql = "SELECT COUNT(*) as c FROM messages";
   let sql = "SELECT * FROM messages";
   const params: any[] = [];
-  if (status) { countSql += " WHERE status = ?"; sql += " WHERE status = ?"; params.push(status); }
+  if (status) {
+    countSql += " WHERE status = ?";
+    sql += " WHERE status = ?";
+    params.push(status);
+  }
   sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
 
   const total = (db.prepare(countSql).get(...params) as any)?.c || 0;
@@ -208,40 +296,59 @@ app.get("/inbox", (c) => {
   const totalPages = Math.ceil(total / limit);
 
   const filters = ["", "pending", "processing", "done", "cancelled"];
-  const filterHtml = filters.map(f =>
-    `<a href="/inbox${f ? '?status='+f : ''}" class="btn btn-sm ${status === f ? '' : 'btn-outline'}" style="margin-right:4px">${f || "All"}</a>`
-  ).join("");
+  const filterHtml = filters
+    .map(
+      (f) =>
+        `<a href="/inbox${f ? "?status=" + f : ""}" class="btn btn-sm ${status === f ? "" : "btn-outline"}" style="margin-right:4px">${f || "All"}</a>`,
+    )
+    .join("");
 
   const qs = status ? `&status=${status}` : "";
-  const paginationHtml = totalPages > 1 ? `<div class="flex mt-8" style="justify-content:space-between">
+  const paginationHtml =
+    totalPages > 1
+      ? `<div class="flex mt-8" style="justify-content:space-between">
     <span class="text-muted">Page ${page} of ${totalPages} (${total} messages)</span>
     <span>${page > 1 ? `<a href="/inbox?page=${page - 1}${qs}" class="btn btn-sm btn-outline">Prev</a> ` : ""}${page < totalPages ? `<a href="/inbox?page=${page + 1}${qs}" class="btn btn-sm btn-outline">Next</a>` : ""}</span>
-  </div>` : "";
+  </div>`
+      : "";
 
   const html = `
     <h1>Inbox</h1>
     <div class="mb-16">${filterHtml}</div>
     <table>
-      <tr><th>CH</th><th>Sender</th><th>Content</th><th>Status</th><th>Time</th></tr>
-      ${msgs.map(m => `
+      <tr><th>Source</th><th>Sender</th><th>Content</th><th>Status</th><th>Time</th></tr>
+      ${msgs
+        .map(
+          (m) => {
+            const source = getMessageSource(m);
+            return `
         <tr class="msg-row" hx-get="/inbox/${m.id}" hx-target="#detail-${m.id}" hx-swap="innerHTML">
-          <td><span class="ch-icon">${channelIcon(m.channel)}</span></td>
+          <td>
+            ${source.isTrigger
+              ? `<span class="badge" style="background:#7c6ef020;color:#7c6ef0" title="Trigger">${safe(source.label)}</span>`
+              : `<span class="ch-icon" title="${safe(source.label)}">${channelIcon(m.channel)}</span>`}
+          </td>
           <td>${safe(m.sender || "-")}</td>
           <td>${safe((m.content || "").slice(0, 80))}${m.content?.length > 80 ? "..." : ""}</td>
           <td><span class="badge" style="background:${statusColor(m.status)}20;color:${statusColor(m.status)}">${m.status}</span></td>
           <td class="text-muted">${timeAgo(m.created_at)}</td>
         </tr>
         <tr id="detail-${m.id}"></tr>
-      `).join("")}
+      `;
+          }
+        )
+        .join("")}
     </table>
-    ${msgs.length === 0 ? '<div class="card text-muted">No messages found.</div>' : ''}
+    ${msgs.length === 0 ? '<div class="card text-muted">No messages found.</div>' : ""}
     ${paginationHtml}`;
 
   return c.html(layout("Inbox", html, "inbox"));
 });
 
 app.get("/inbox/:id", (c) => {
-  const msg = db.prepare("SELECT * FROM messages WHERE id = ?").get(c.req.param("id")) as any;
+  const msg = db
+    .prepare("SELECT * FROM messages WHERE id = ?")
+    .get(c.req.param("id")) as any;
   if (!msg) return c.html("<td colspan=5>Not found</td>");
   return c.html(`<td colspan="5"><div class="msg-detail">
     <strong>ID:</strong> ${msg.id} | <strong>Channel:</strong> ${msg.channel} | <strong>Sender:</strong> ${safe(msg.sender || "-")}
@@ -257,20 +364,29 @@ ${safe(msg.content)}
 // ============ TRIGGERS ============
 
 function triggerTypeIcon(type: string): string {
-  return type === "cron" ? "&#9200;" : type === "webhook" ? "&#9889;" : "&#9654;";
+  return type === "cron"
+    ? "&#9200;"
+    : type === "webhook"
+      ? "&#9889;"
+      : "&#9654;";
 }
 
 function triggerRow(t: any): string {
   return `<tr>
     <td>${triggerTypeIcon(t.type)} ${safe(t.type)}</td>
     <td><strong>${safe(t.name)}</strong>${t.description ? `<br><span class="text-muted">${safe(t.description)}</span>` : ""}</td>
-    <td>${t.type === "cron" ? `<code>${safe(t.schedule || "-")}</code>` :
-         t.type === "webhook" ? `<code>/api/webhook/${safe(t.name)}</code>` : "-"}</td>
-    <td><span class="dot" style="background:${t.enabled ? '#4caf50' : '#999'}"></span>${t.enabled ? 'On' : 'Off'}</td>
+    <td>${
+      t.type === "cron"
+        ? `<code>${safe(t.schedule || "-")}</code>`
+        : t.type === "webhook"
+          ? `<code>/api/webhook/${safe(t.name)}</code>`
+          : "-"
+    }</td>
+    <td><span class="dot" style="background:${t.enabled ? "#4caf50" : "#999"}"></span>${t.enabled ? "On" : "Off"}</td>
     <td class="text-muted">${t.last_run ? timeAgo(t.last_run) : "never"} (${t.run_count || 0}x)</td>
     <td class="flex">
       <button class="btn btn-sm btn-outline" hx-post="/triggers/${t.id}/toggle" hx-target="#trigger-list" hx-swap="innerHTML">
-        ${t.enabled ? 'Disable' : 'Enable'}</button>
+        ${t.enabled ? "Disable" : "Enable"}</button>
       <button class="btn btn-sm btn-outline" hx-post="/triggers/${t.id}/run" hx-target="#trigger-list" hx-swap="innerHTML">
         Run</button>
       <a href="/triggers/${t.id}/edit" class="btn btn-sm btn-outline">Edit</a>
@@ -283,7 +399,9 @@ function triggerRow(t: any): string {
 
 app.get("/triggers", (c) => {
   const flash = c.req.query("msg");
-  const triggers = db.prepare("SELECT * FROM triggers ORDER BY type, name").all() as any[];
+  const triggers = db
+    .prepare("SELECT * FROM triggers ORDER BY type, name")
+    .all() as any[];
 
   const html = `
     <h1>Triggers</h1>
@@ -292,11 +410,14 @@ app.get("/triggers", (c) => {
       <a href="/triggers/new" class="btn">+ New Trigger</a>
     </div>
     <div class="card" id="trigger-list">
-      ${triggers.length === 0 ? '<div class="text-muted">No triggers configured. Create one to get started.</div>' :
-        `<table>
+      ${
+        triggers.length === 0
+          ? '<div class="text-muted">No triggers configured. Create one to get started.</div>'
+          : `<table>
           <tr><th>Type</th><th>Name</th><th>Schedule / URL</th><th>Status</th><th>Last Run</th><th></th></tr>
-          ${triggers.map(t => triggerRow(t)).join("")}
-        </table>`}
+          ${triggers.map((t) => triggerRow(t)).join("")}
+        </table>`
+      }
     </div>
 
     <div class="card"><h3>How Triggers Work</h3>
@@ -361,21 +482,23 @@ app.get("/triggers/new", (c) => {
 
 app.post("/triggers", async (c) => {
   const body = await c.req.parseBody();
-  const name = (body.name as string || "").trim();
-  const type = body.type as string || "manual";
-  const description = (body.description as string || "").trim();
-  const channel = (body.channel as string || "internal").trim();
-  const schedule = (body.schedule as string || "").trim() || null;
-  const webhook_secret = (body.webhook_secret as string || "").trim() || null;
-  const prompt = (body.prompt as string || "").trim();
+  const name = ((body.name as string) || "").trim();
+  const type = (body.type as string) || "manual";
+  const description = ((body.description as string) || "").trim();
+  const channel = ((body.channel as string) || "internal").trim();
+  const schedule = ((body.schedule as string) || "").trim() || null;
+  const webhook_secret = ((body.webhook_secret as string) || "").trim() || null;
+  const prompt = ((body.prompt as string) || "").trim();
 
-  if (!name || !/^[a-z0-9_-]+$/.test(name)) return c.redirect("/triggers/new?err=name");
-  if (schedule && !/^[\d\s*\/,-]+$/.test(schedule)) return c.redirect("/triggers/new?err=schedule");
+  if (!name || !/^[a-z0-9_-]+$/.test(name))
+    return c.redirect("/triggers/new?err=name");
+  if (schedule && !/^[\d\s*\/,-]+$/.test(schedule))
+    return c.redirect("/triggers/new?err=schedule");
 
   try {
     db.prepare(
       `INSERT INTO triggers (name, type, description, channel, schedule, webhook_secret, prompt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(name, type, description, channel, schedule, webhook_secret, prompt);
   } catch (err: any) {
     return c.redirect(`/triggers?msg=Error: ${err.message}`);
@@ -387,7 +510,9 @@ app.post("/triggers", async (c) => {
 });
 
 app.get("/triggers/:id/edit", (c) => {
-  const t = db.prepare("SELECT * FROM triggers WHERE id = ?").get(c.req.param("id")) as any;
+  const t = db
+    .prepare("SELECT * FROM triggers WHERE id = ?")
+    .get(c.req.param("id")) as any;
   if (!t) return c.redirect("/triggers?msg=Trigger not found");
 
   const html = `
@@ -406,15 +531,23 @@ app.get("/triggers/:id/edit", (c) => {
           <label class="text-muted">Description</label>
           <input type="text" name="description" value="${safe(t.description || "")}">
         </div>
-        ${t.type === "cron" ? `<div class="mb-8">
+        ${
+          t.type === "cron"
+            ? `<div class="mb-8">
           <label class="text-muted">Cron Schedule</label>
           <input type="text" name="schedule" value="${safe(t.schedule || "")}">
-        </div>` : ""}
-        ${t.type === "webhook" ? `<div class="mb-8">
+        </div>`
+            : ""
+        }
+        ${
+          t.type === "webhook"
+            ? `<div class="mb-8">
           <label class="text-muted">Webhook Secret</label>
           <input type="text" name="webhook_secret" value="${safe(t.webhook_secret || "")}">
           <div class="text-muted" style="font-size:11px;margin-top:4px">URL: <code>/api/webhook/${safe(t.name)}</code></div>
-        </div>` : ""}
+        </div>`
+            : ""
+        }
         <div class="mb-8">
           <label class="text-muted">Channel</label>
           <input type="text" name="channel" value="${safe(t.channel || "internal")}">
@@ -442,16 +575,24 @@ app.post("/triggers/:id/update", async (c) => {
   const updates: string[] = [];
   const params: unknown[] = [];
 
-  for (const field of ["description", "channel", "schedule", "webhook_secret", "prompt"]) {
+  for (const field of [
+    "description",
+    "channel",
+    "schedule",
+    "webhook_secret",
+    "prompt",
+  ]) {
     if (body[field] !== undefined) {
       updates.push(`${field} = ?`);
-      params.push((body[field] as string || "").trim() || null);
+      params.push(((body[field] as string) || "").trim() || null);
     }
   }
 
   if (updates.length > 0) {
     params.push(id);
-    db.prepare(`UPDATE triggers SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+    db.prepare(`UPDATE triggers SET ${updates.join(", ")} WHERE id = ?`).run(
+      ...params,
+    );
     if (t.type === "cron") syncCrontab();
   }
 
@@ -463,13 +604,21 @@ app.post("/triggers/:id/toggle", (c) => {
   const t = db.prepare("SELECT * FROM triggers WHERE id = ?").get(id) as any;
   if (!t) return c.html('<div class="text-muted">Not found</div>');
 
-  db.prepare("UPDATE triggers SET enabled = ? WHERE id = ?").run(t.enabled ? 0 : 1, id);
+  db.prepare("UPDATE triggers SET enabled = ? WHERE id = ?").run(
+    t.enabled ? 0 : 1,
+    id,
+  );
   if (t.type === "cron") syncCrontab();
 
-  const triggers = db.prepare("SELECT * FROM triggers ORDER BY type, name").all() as any[];
-  return c.html(triggers.length === 0 ? '<div class="text-muted">No triggers.</div>' :
-    `<table><tr><th>Type</th><th>Name</th><th>Schedule / URL</th><th>Status</th><th>Last Run</th><th></th></tr>
-     ${triggers.map(t => triggerRow(t)).join("")}</table>`);
+  const triggers = db
+    .prepare("SELECT * FROM triggers ORDER BY type, name")
+    .all() as any[];
+  return c.html(
+    triggers.length === 0
+      ? '<div class="text-muted">No triggers.</div>'
+      : `<table><tr><th>Type</th><th>Name</th><th>Schedule / URL</th><th>Status</th><th>Last Run</th><th></th></tr>
+     ${triggers.map((t) => triggerRow(t)).join("")}</table>`,
+  );
 });
 
 app.post("/triggers/:id/run", (c) => {
@@ -483,10 +632,13 @@ app.post("/triggers/:id/run", (c) => {
     stderr: "ignore",
   });
 
-  const triggers = db.prepare("SELECT * FROM triggers ORDER BY type, name").all() as any[];
+  const triggers = db
+    .prepare("SELECT * FROM triggers ORDER BY type, name")
+    .all() as any[];
   return c.html(
     `<table><tr><th>Type</th><th>Name</th><th>Schedule / URL</th><th>Status</th><th>Last Run</th><th></th></tr>
-     ${triggers.map(t => triggerRow(t)).join("")}</table>`);
+     ${triggers.map((t) => triggerRow(t)).join("")}</table>`,
+  );
 });
 
 app.delete("/triggers/:id", (c) => {
@@ -497,16 +649,23 @@ app.delete("/triggers/:id", (c) => {
     if (t.type === "cron") syncCrontab();
   }
 
-  const triggers = db.prepare("SELECT * FROM triggers ORDER BY type, name").all() as any[];
-  return c.html(triggers.length === 0 ? '<div class="text-muted">No triggers configured.</div>' :
-    `<table><tr><th>Type</th><th>Name</th><th>Schedule / URL</th><th>Status</th><th>Last Run</th><th></th></tr>
-     ${triggers.map(t => triggerRow(t)).join("")}</table>`);
+  const triggers = db
+    .prepare("SELECT * FROM triggers ORDER BY type, name")
+    .all() as any[];
+  return c.html(
+    triggers.length === 0
+      ? '<div class="text-muted">No triggers configured.</div>'
+      : `<table><tr><th>Type</th><th>Name</th><th>Schedule / URL</th><th>Status</th><th>Last Run</th><th></th></tr>
+     ${triggers.map((t) => triggerRow(t)).join("")}</table>`,
+  );
 });
 
 // ============ WEBHOOK API ============
 app.post("/api/webhook/:name", async (c) => {
   const name = c.req.param("name");
-  const t = db.prepare("SELECT * FROM triggers WHERE name = ? AND type = 'webhook'").get(name) as any;
+  const t = db
+    .prepare("SELECT * FROM triggers WHERE name = ? AND type = 'webhook'")
+    .get(name) as any;
 
   if (!t) {
     return c.json({ error: "Webhook not found" }, 404);
@@ -545,12 +704,17 @@ app.post("/api/webhook/:name", async (c) => {
     stderr: "ignore",
   });
 
-  return c.json({ ok: true, trigger: name, message: "Webhook received, Claude will process it" });
+  return c.json({
+    ok: true,
+    trigger: name,
+    message: "Webhook received, Claude will process it",
+  });
 });
 
 // ============ MEMORY ============
 app.get("/memory", (c) => {
-  const memoryMd = readFile(`${MEMORY}/MEMORY.md`) || readFile(`${WS}/MEMORY.md`);
+  const memoryMd =
+    readFile(`${MEMORY}/MEMORY.md`) || readFile(`${WS}/MEMORY.md`);
 
   let files: string[] = [];
   if (existsSync(MEMORY)) {
@@ -565,7 +729,9 @@ app.get("/memory", (c) => {
       } catch {}
       return out;
     };
-    files = walk(MEMORY).filter(f => f.endsWith(".md")).sort();
+    files = walk(MEMORY)
+      .filter((f) => f.endsWith(".md"))
+      .sort();
   }
 
   const html = `
@@ -583,11 +749,17 @@ app.get("/memory", (c) => {
     </div>
 
     <div class="card"><h3>Memory Files (${files.length})</h3>
-      ${files.length === 0 ? '<div class="text-muted">No memory files found.</div>' :
-        `<ul style="list-style:none">${files.map(f =>
-          `<li style="padding:3px 0"><span class="tag">${f.split("/")[0]}</span>
-           <a href="/memory/view?file=${encodeURIComponent(f)}" style="color:#7c6ef0;text-decoration:none" hx-get="/memory/view?file=${encodeURIComponent(f)}" hx-target="#file-view" hx-swap="innerHTML">${safe(f)}</a></li>`
-        ).join("")}</ul>`}
+      ${
+        files.length === 0
+          ? '<div class="text-muted">No memory files found.</div>'
+          : `<ul style="list-style:none">${files
+              .map(
+                (f) =>
+                  `<li style="padding:3px 0"><span class="tag">${f.split("/")[0]}</span>
+           <a href="/memory/view?file=${encodeURIComponent(f)}" style="color:#7c6ef0;text-decoration:none" hx-get="/memory/view?file=${encodeURIComponent(f)}" hx-target="#file-view" hx-swap="innerHTML">${safe(f)}</a></li>`,
+              )
+              .join("")}</ul>`
+      }
     </div>
     <div id="file-view"></div>`;
 
@@ -609,35 +781,59 @@ app.get("/memory/search", (c) => {
         for (const f of readdirSync(dir, { withFileTypes: true })) {
           if (results.length >= MAX_RESULTS) return;
           const rel = prefix ? `${prefix}/${f.name}` : f.name;
-          if (f.isDirectory()) { walk(join(dir, f.name), rel); continue; }
+          if (f.isDirectory()) {
+            walk(join(dir, f.name), rel);
+            continue;
+          }
           if (!f.name.endsWith(".md")) continue;
           const fullPath = join(dir, f.name);
-          try { if (statSync(fullPath).size > MAX_FILE_SIZE) continue; } catch { continue; }
+          try {
+            if (statSync(fullPath).size > MAX_FILE_SIZE) continue;
+          } catch {
+            continue;
+          }
           const content = readFile(fullPath);
-          const matching = content.split("\n").filter(l => l.toLowerCase().includes(qLower));
-          if (matching.length > 0) results.push({ file: rel, lines: matching.slice(0, 3) });
+          const matching = content
+            .split("\n")
+            .filter((l) => l.toLowerCase().includes(qLower));
+          if (matching.length > 0)
+            results.push({ file: rel, lines: matching.slice(0, 3) });
         }
       } catch {}
     };
     walk(MEMORY);
   }
 
-  if (results.length === 0) return c.html(`<div class="text-muted">No results for "${safe(q)}".</div>`);
-  const capped = results.length >= MAX_RESULTS ? `<div class="text-muted mb-8">Showing first ${MAX_RESULTS} results. Use QMD search for comprehensive results.</div>` : "";
-  return c.html(capped + results.map(r => `
+  if (results.length === 0)
+    return c.html(`<div class="text-muted">No results for "${safe(q)}".</div>`);
+  const capped =
+    results.length >= MAX_RESULTS
+      ? `<div class="text-muted mb-8">Showing first ${MAX_RESULTS} results. Use QMD search for comprehensive results.</div>`
+      : "";
+  return c.html(
+    capped +
+      results
+        .map(
+          (r) => `
     <div class="card" style="padding:10px;margin-bottom:8px">
       <strong style="color:#7c6ef0">${safe(r.file)}</strong>
-      <pre style="margin-top:4px;padding:8px;font-size:12px">${r.lines.map(l => safe(l)).join("\n")}</pre>
-    </div>`).join(""));
+      <pre style="margin-top:4px;padding:8px;font-size:12px">${r.lines.map((l) => safe(l)).join("\n")}</pre>
+    </div>`,
+        )
+        .join(""),
+  );
 });
 
 app.get("/memory/view", (c) => {
   const file = c.req.query("file") || "";
   if (!file) return c.html("");
   const resolved = resolve(join(MEMORY, file));
-  if (!resolved.startsWith(MEMORY + "/")) return c.html('<div class="text-muted">Invalid path.</div>');
+  if (!resolved.startsWith(MEMORY + "/"))
+    return c.html('<div class="text-muted">Invalid path.</div>');
   const content = readFile(resolved);
-  return c.html(`<div class="card"><h3>${safe(file)}</h3><pre>${safe(content) || '<span class="text-muted">Empty file.</span>'}</pre></div>`);
+  return c.html(
+    `<div class="card"><h3>${safe(file)}</h3><pre>${safe(content) || '<span class="text-muted">Empty file.</span>'}</pre></div>`,
+  );
 });
 
 // ============ JOURNAL ============
@@ -662,7 +858,10 @@ app.get("/journal/content", (c) => {
   const date = c.req.query("date") || new Date().toISOString().slice(0, 10);
   const path = `${MEMORY}/${date}.md`;
   const content = readFile(path);
-  if (!content) return c.html(`<div class="text-muted">No journal entry for ${safe(date)}.</div>`);
+  if (!content)
+    return c.html(
+      `<div class="text-muted">No journal entry for ${safe(date)}.</div>`,
+    );
   return c.html(`<pre>${safe(content)}</pre>`);
 });
 
@@ -695,14 +894,18 @@ app.get("/chat", (c) => {
 });
 
 app.get("/chat/messages", (c) => {
-  const msgs = db.prepare(
-    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50"
-  ).all() as any[];
-  return c.html(msgs.map(m => chatBubble(m)).join(""));
+  const msgs = db
+    .prepare(
+      "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50",
+    )
+    .all() as any[];
+  return c.html(msgs.map((m) => chatBubble(m)).join(""));
 });
 
 function chatBubble(m: any): string {
-  const isWaiting = (m.status === "pending" || m.status === "processing") && !m.response_summary;
+  const isWaiting =
+    (m.status === "pending" || m.status === "processing") &&
+    !m.response_summary;
   const ts = timeAgo(m.created_at);
   let html = "";
 
@@ -724,12 +927,14 @@ function chatBubble(m: any): string {
 
 app.post("/chat", async (c) => {
   const body = await c.req.parseBody();
-  const content = (body.content as string || "").trim();
+  const content = ((body.content as string) || "").trim();
   if (!content) return c.html("");
 
-  const msg = db.prepare(
-    "INSERT INTO messages (channel, sender, content) VALUES ('web', 'web-ui', ?) RETURNING *"
-  ).get(content) as any;
+  const msg = db
+    .prepare(
+      "INSERT INTO messages (channel, sender, content) VALUES ('web', 'web-ui', ?) RETURNING *",
+    )
+    .get(content) as any;
 
   // Touch wake file
   try {
@@ -744,15 +949,21 @@ app.post("/chat", async (c) => {
     message: content.slice(0, 4000),
     timestamp: msg.created_at,
   });
-  Bun.spawn(["/atlas/app/triggers/trigger.sh", "web-chat", payload, "_default"], {
-    stdout: "ignore", stderr: "ignore",
-  });
+  Bun.spawn(
+    ["/atlas/app/triggers/trigger.sh", "web-chat", payload, "_default"],
+    {
+      stdout: "ignore",
+      stderr: "ignore",
+    },
+  );
 
   // Return updated message list
-  const msgs = db.prepare(
-    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50"
-  ).all() as any[];
-  return c.html(msgs.map(m => chatBubble(m)).join(""));
+  const msgs = db
+    .prepare(
+      "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50",
+    )
+    .all() as any[];
+  return c.html(msgs.map((m) => chatBubble(m)).join(""));
 });
 
 // ============ TASKS ============
@@ -763,18 +974,27 @@ app.get("/tasks", (c) => {
   const offset = (page - 1) * limit;
 
   // Stats
-  const taskCounts = db.prepare(
-    "SELECT status, COUNT(*) as c FROM messages WHERE channel='task' GROUP BY status"
-  ).all() as any[];
+  const taskCounts = db
+    .prepare(
+      "SELECT status, COUNT(*) as c FROM messages WHERE channel='task' GROUP BY status",
+    )
+    .all() as any[];
   const tc: Record<string, number> = {};
   let taskTotal = 0;
-  for (const row of taskCounts) { tc[row.status] = row.c; taskTotal += row.c; }
+  for (const row of taskCounts) {
+    tc[row.status] = row.c;
+    taskTotal += row.c;
+  }
 
   // Filtered query
   let countSql = "SELECT COUNT(*) as c FROM messages WHERE channel='task'";
   let sql = "SELECT * FROM messages WHERE channel='task'";
   const params: any[] = [];
-  if (status) { countSql += " AND status = ?"; sql += " AND status = ?"; params.push(status); }
+  if (status) {
+    countSql += " AND status = ?";
+    sql += " AND status = ?";
+    params.push(status);
+  }
   sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
 
   const total = (db.prepare(countSql).get(...params) as any)?.c || 0;
@@ -782,23 +1002,31 @@ app.get("/tasks", (c) => {
   const totalPages = Math.ceil(total / limit);
 
   // Active awaits
-  const awaits = db.prepare(
-    `SELECT ta.task_id, ta.trigger_name, ta.session_key, ta.created_at, m.status as task_status, m.content
+  const awaits = db
+    .prepare(
+      `SELECT ta.task_id, ta.trigger_name, ta.session_key, ta.created_at, m.status as task_status, m.content
      FROM task_awaits ta JOIN messages m ON ta.task_id = m.id
      WHERE m.status IN ('pending', 'processing')
-     ORDER BY ta.created_at DESC`
-  ).all() as any[];
+     ORDER BY ta.created_at DESC`,
+    )
+    .all() as any[];
 
   const filters = ["", "pending", "processing", "done", "cancelled"];
-  const filterHtml = filters.map(f =>
-    `<a href="/tasks${f ? '?status='+f : ''}" class="btn btn-sm ${status === f ? '' : 'btn-outline'}" style="margin-right:4px">${f || "All"}</a>`
-  ).join("");
+  const filterHtml = filters
+    .map(
+      (f) =>
+        `<a href="/tasks${f ? "?status=" + f : ""}" class="btn btn-sm ${status === f ? "" : "btn-outline"}" style="margin-right:4px">${f || "All"}</a>`,
+    )
+    .join("");
 
   const qs = status ? `&status=${status}` : "";
-  const paginationHtml = totalPages > 1 ? `<div class="flex mt-8" style="justify-content:space-between">
+  const paginationHtml =
+    totalPages > 1
+      ? `<div class="flex mt-8" style="justify-content:space-between">
     <span class="text-muted">Page ${page} of ${totalPages} (${total} tasks)</span>
     <span>${page > 1 ? `<a href="/tasks?page=${page - 1}${qs}" class="btn btn-sm btn-outline">Prev</a> ` : ""}${page < totalPages ? `<a href="/tasks?page=${page + 1}${qs}" class="btn btn-sm btn-outline">Next</a>` : ""}</span>
-  </div>` : "";
+  </div>`
+      : "";
 
   const html = `
     <h1>Tasks</h1>
@@ -809,23 +1037,33 @@ app.get("/tasks", (c) => {
       <div class="stat"><div class="num" style="color:#999">${tc["cancelled"] || 0}</div><div class="label">Cancelled</div></div>
     </div>
 
-    ${awaits.length > 0 ? `<div class="card mb-16"><h3>Active Awaits</h3>
+    ${
+      awaits.length > 0
+        ? `<div class="card mb-16"><h3>Active Awaits</h3>
       <table>
         <tr><th>Task</th><th>Trigger</th><th>Key</th><th>Status</th><th>Waiting Since</th></tr>
-        ${awaits.map(a => `<tr>
+        ${awaits
+          .map(
+            (a) => `<tr>
           <td>#${a.task_id}</td>
           <td>${safe(a.trigger_name)}</td>
           <td><code>${safe(a.session_key)}</code></td>
           <td><span class="badge" style="background:${statusColor(a.task_status)}20;color:${statusColor(a.task_status)}">${a.task_status}</span></td>
           <td class="text-muted">${timeAgo(a.created_at)}</td>
-        </tr>`).join("")}
+        </tr>`,
+          )
+          .join("")}
       </table>
-    </div>` : ""}
+    </div>`
+        : ""
+    }
 
     <div class="mb-16">${filterHtml}</div>
     <table>
       <tr><th>ID</th><th>Content</th><th>Status</th><th>Response</th><th>Created</th></tr>
-      ${tasks.map(t => `
+      ${tasks
+        .map(
+          (t) => `
         <tr class="msg-row" hx-get="/tasks/${t.id}" hx-target="#task-detail-${t.id}" hx-swap="innerHTML">
           <td>#${t.id}</td>
           <td>${safe((t.content || "").slice(0, 100))}${t.content?.length > 100 ? "..." : ""}</td>
@@ -834,21 +1072,25 @@ app.get("/tasks", (c) => {
           <td class="text-muted">${timeAgo(t.created_at)}</td>
         </tr>
         <tr id="task-detail-${t.id}"></tr>
-      `).join("")}
+      `,
+        )
+        .join("")}
     </table>
-    ${tasks.length === 0 ? '<div class="card text-muted">No tasks found.</div>' : ''}
+    ${tasks.length === 0 ? '<div class="card text-muted">No tasks found.</div>' : ""}
     ${paginationHtml}`;
 
   return c.html(layout("Tasks", html, "tasks"));
 });
 
 app.get("/tasks/:id", (c) => {
-  const task = db.prepare("SELECT * FROM messages WHERE id = ? AND channel='task'").get(c.req.param("id")) as any;
+  const task = db
+    .prepare("SELECT * FROM messages WHERE id = ? AND channel='task'")
+    .get(c.req.param("id")) as any;
   if (!task) return c.html("<td colspan=5>Not found</td>");
 
-  const awaiter = db.prepare(
-    "SELECT * FROM task_awaits WHERE task_id = ?"
-  ).get(task.id) as any;
+  const awaiter = db
+    .prepare("SELECT * FROM task_awaits WHERE task_id = ?")
+    .get(task.id) as any;
 
   return c.html(`<td colspan="5"><div class="msg-detail">
     <strong>ID:</strong> ${task.id} | <strong>Status:</strong> ${task.status}
@@ -858,8 +1100,12 @@ app.get("/tasks/:id", (c) => {
     <hr style="border-color:#3a3b55;margin:8px 0">
     <strong>Content:</strong>
 <pre style="margin:4px 0;white-space:pre-wrap">${safe(task.content)}</pre>
-    ${task.response_summary ? `<hr style="border-color:#3a3b55;margin:8px 0"><strong>Response:</strong>
-<pre style="margin:4px 0;white-space:pre-wrap">${safe(task.response_summary)}</pre>` : ""}
+    ${
+      task.response_summary
+        ? `<hr style="border-color:#3a3b55;margin:8px 0"><strong>Response:</strong>
+<pre style="margin:4px 0;white-space:pre-wrap">${safe(task.response_summary)}</pre>`
+        : ""
+    }
   </div></td>`);
 });
 
@@ -870,13 +1116,14 @@ app.get("/settings", (c) => {
   const config = readFile(CONFIG);
   const extensions = readFile(EXTENSIONS);
 
-  const triggerCount = (db.prepare("SELECT COUNT(*) as c FROM triggers").get() as any)?.c || 0;
+  const triggerCount =
+    (db.prepare("SELECT COUNT(*) as c FROM triggers").get() as any)?.c || 0;
 
   const html = `
     <h1>Settings</h1>
     ${flash ? `<div class="flash flash-ok">Saved ${safe(flash)} successfully.</div>` : ""}
 
-    <div class="card"><h3>identity.md</h3>
+    <div class="card"><h3>IDENTITY.md</h3>
       <form method="POST" action="/settings/identity">
         <textarea name="content" rows="8">${safe(identity)}</textarea>
         <button type="submit" class="mt-8">Save Identity</button>
@@ -906,7 +1153,7 @@ app.get("/settings", (c) => {
 
 app.post("/settings/identity", async (c) => {
   const body = await c.req.parseBody();
-  const content = body.content as string || "";
+  const content = (body.content as string) || "";
   mkdirSync(WS, { recursive: true });
   writeFileSync(IDENTITY, content);
   return c.redirect("/settings?saved=identity");
@@ -914,7 +1161,7 @@ app.post("/settings/identity", async (c) => {
 
 app.post("/settings/config", async (c) => {
   const body = await c.req.parseBody();
-  const content = body.content as string || "";
+  const content = (body.content as string) || "";
   mkdirSync(WS, { recursive: true });
   writeFileSync(CONFIG, content);
   return c.redirect("/settings?saved=config");
@@ -922,12 +1169,11 @@ app.post("/settings/config", async (c) => {
 
 app.post("/settings/extensions", async (c) => {
   const body = await c.req.parseBody();
-  const content = body.content as string || "";
+  const content = (body.content as string) || "";
   mkdirSync(WS, { recursive: true });
   writeFileSync(EXTENSIONS, content);
   return c.redirect("/settings?saved=extensions");
 });
-
 
 // --- Start ---
 export default {
