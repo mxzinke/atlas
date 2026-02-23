@@ -18,9 +18,10 @@ RUN apt-get update && apt-get install -y \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Bun
+# Install Bun (to /usr/local so it survives /root volume mount)
+ENV BUN_INSTALL="/usr/local"
 RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/atlas/app/bin:/atlas/workspace/bin:/root/.bun/bin:${PATH}"
+ENV PATH="/atlas/app/bin:/atlas/workspace/bin:${PATH}"
 
 # Install supercronic (cron replacement)
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -29,7 +30,11 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/supercronic
 
 # Install Claude Code (native binary)
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Use temp HOME to avoid installing into /root which gets volume-mounted
+RUN HOME=/tmp/claude-install curl -fsSL https://claude.ai/install.sh | HOME=/tmp/claude-install bash \
+    && cp /tmp/claude-install/.claude/bin/claude /usr/local/bin/claude \
+    && chmod +x /usr/local/bin/claude \
+    && rm -rf /tmp/claude-install
 
 # Install Playwright + MCP
 RUN npx playwright install --with-deps chromium 2>/dev/null || true
