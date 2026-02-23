@@ -15,21 +15,22 @@ Atlas is a containerized autonomous agent system built on Claude Code. It uses a
 ### Core Components
 - **Inbox-MCP** (`app/inbox-mcp/`): SQLite-based MCP server for message and trigger management
 - **Web-UI** (`app/web-ui/`): Hono.js + HTMX dashboard on port 3000 (nginx proxy: 8080)
-- **Watcher** (`app/watcher.sh`): inotifywait-based event watcher, wakes main session on new messages
+- **Watcher** (`app/watcher.sh`): inotifywait-based event watcher, wakes worker session on `.wake` and re-awakens trigger sessions via `.wake-<trigger>-<taskId>` files
 - **Hooks** (`app/hooks/`): SessionStart, Stop, PreCompact, SubagentStop (trigger-aware)
 - **Triggers** (`app/triggers/`): Autonomous agent sessions per trigger (read-only, filter/escalation)
 - **QMD**: Memory search (BM25/vector/hybrid) as HTTP MCP daemon
 
 ### Data Flow
 1. Trigger receives event → spawns own Claude session (read-only, with MCP access)
-2. Trigger session processes event: handles directly or escalates via `inbox_write`
-3. Escalated tasks → `.wake` → watcher resumes main session (read/write)
-4. Main session processes tasks from inbox sequentially
-5. Memory is written as Markdown, QMD indexes automatically
+2. Trigger session processes event: handles directly or escalates via `task_create`
+3. Escalated tasks → `.wake` → watcher resumes worker session (read/write)
+4. Worker session processes tasks from inbox sequentially
+5. Worker completes task → `.wake-<trigger>-<taskId>` → watcher re-awakens trigger session
+6. Memory is written as Markdown, QMD indexes automatically
 
 ## Tech Stack
 - **Runtime**: Bun (TypeScript, no build step)
-- **Database**: SQLite (better-sqlite3)
+- **Database**: SQLite (bun:sqlite)
 - **Web**: Hono.js + HTMX (SSR, no SPA)
 - **Process Manager**: supervisord
 - **Cron**: supercronic
@@ -82,7 +83,14 @@ docker run -it --rm -v $(pwd)/atlas-home:/root atlas claude login
 ## MCP Servers
 
 ### Inbox-MCP (stdio)
-Tools: `inbox_list`, `inbox_mark`, `inbox_write`, `inbox_stats`, `trigger_list`, `trigger_create`, `trigger_update`, `trigger_delete`
+
+**Trigger tools** (when `ATLAS_TRIGGER` is set): `task_create`, `task_get`, `task_update`, `task_cancel`, `inbox_mark`, `inbox_list`
+
+**Worker tools** (when `ATLAS_TRIGGER` is not set): `get_next_task`, `task_complete`, `task_list`, `task_get`, `inbox_stats`
+
+**Shared tools** (always available): `trigger_list`, `trigger_create`, `trigger_update`, `trigger_delete`
+
+**Tables**: `messages` (task queue with statuses: pending/processing/done/cancelled), `task_awaits` (tracks which trigger session is waiting for a task result), `trigger_sessions` (maps triggers to persistent Claude session IDs), `triggers` (cron/webhook/manual trigger definitions)
 
 ### QMD-MCP (HTTP, port 8181)
 Tools: `qmd_search`, `qmd_vector_search`, `qmd_deep_search`, `qmd_get`, `qmd_multi_get`, `qmd_status`

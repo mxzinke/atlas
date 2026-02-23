@@ -691,17 +691,15 @@ app.post("/chat", async (c) => {
   const content = (body.content as string || "").trim();
   if (!content) return c.html("");
 
-  db.prepare(
-    "INSERT INTO messages (channel, sender, content) VALUES ('web', 'web-ui', ?)"
-  ).run(content);
+  const msg = db.prepare(
+    "INSERT INTO messages (channel, sender, content) VALUES ('web', 'web-ui', ?) RETURNING *"
+  ).get(content) as any;
 
   // Touch wake file
   try {
     mkdirSync(`${WS}/inbox`, { recursive: true });
     closeSync(openSync(WAKE, "w"));
   } catch {}
-
-  const msg = db.prepare("SELECT * FROM messages WHERE id = last_insert_rowid()").get() as any;
   return c.html(chatBubble(msg));
 });
 

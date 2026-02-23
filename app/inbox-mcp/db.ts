@@ -20,6 +20,8 @@ function createTables(database: Database): void {
       processed_at TEXT
     );
 
+    CREATE INDEX IF NOT EXISTS idx_messages_status_created ON messages(status, created_at);
+
     CREATE TABLE IF NOT EXISTS task_awaits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id INTEGER NOT NULL UNIQUE,
@@ -61,47 +63,66 @@ function createTables(database: Database): void {
 
 function migrateSchema(database: Database): void {
   // Migrate old messages table (had CHECK constraint on channel)
-  const msgInfo = database.prepare(
+  let msgInfo = database.prepare(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'"
   ).get() as { sql: string } | undefined;
 
   if (msgInfo?.sql?.includes("CHECK(channel IN")) {
-    database.exec(`
-      ALTER TABLE messages RENAME TO _messages_old;
-      CREATE TABLE messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel TEXT NOT NULL,
-        sender TEXT,
-        content TEXT NOT NULL,
-        reply_to TEXT,
-        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
-        response_summary TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        processed_at TEXT
-      );
-      INSERT INTO messages SELECT * FROM _messages_old;
-      DROP TABLE _messages_old;
-    `);
+    database.exec("BEGIN");
+    try {
+      database.exec(`
+        ALTER TABLE messages RENAME TO _messages_old;
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          channel TEXT NOT NULL,
+          sender TEXT,
+          content TEXT NOT NULL,
+          reply_to TEXT,
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
+          response_summary TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          processed_at TEXT
+        );
+        INSERT INTO messages SELECT * FROM _messages_old;
+        DROP TABLE _messages_old;
+      `);
+      database.exec("COMMIT");
+    } catch (e) {
+      database.exec("ROLLBACK");
+      throw e;
+    }
   }
+
+  // Re-query after potential channel migration
+  msgInfo = database.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'"
+  ).get() as { sql: string } | undefined;
 
   // Migrate: add 'cancelled' to messages status constraint
   if (msgInfo?.sql && !msgInfo.sql.includes("'cancelled'")) {
-    database.exec(`
-      ALTER TABLE messages RENAME TO _messages_status_mig;
-      CREATE TABLE messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel TEXT NOT NULL,
-        sender TEXT,
-        content TEXT NOT NULL,
-        reply_to TEXT,
-        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
-        response_summary TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        processed_at TEXT
-      );
-      INSERT INTO messages SELECT * FROM _messages_status_mig;
-      DROP TABLE _messages_status_mig;
-    `);
+    database.exec("BEGIN");
+    try {
+      database.exec(`
+        ALTER TABLE messages RENAME TO _messages_status_mig;
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          channel TEXT NOT NULL,
+          sender TEXT,
+          content TEXT NOT NULL,
+          reply_to TEXT,
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
+          response_summary TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          processed_at TEXT
+        );
+        INSERT INTO messages SELECT * FROM _messages_status_mig;
+        DROP TABLE _messages_status_mig;
+      `);
+      database.exec("COMMIT");
+    } catch (e) {
+      database.exec("ROLLBACK");
+      throw e;
+    }
   }
 
   // Migrate old triggers table (lacked name/schedule/prompt columns)
@@ -138,27 +159,34 @@ function migrateSchema(database: Database): void {
   // Drop session_id from triggers if present (moved to trigger_sessions table)
   if (trigInfo?.sql?.includes("session_id")) {
     // SQLite doesn't support DROP COLUMN before 3.35.0, so recreate the table
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS _triggers_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        type TEXT NOT NULL CHECK(type IN ('cron','webhook','manual')),
-        description TEXT DEFAULT '',
-        channel TEXT DEFAULT 'internal',
-        schedule TEXT,
-        webhook_secret TEXT,
-        prompt TEXT DEFAULT '',
-        session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
-        enabled INTEGER DEFAULT 1,
-        last_run TEXT,
-        run_count INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-      INSERT OR IGNORE INTO _triggers_new (id, name, type, description, channel, schedule, webhook_secret, prompt, session_mode, enabled, last_run, run_count, created_at)
-        SELECT id, name, type, description, channel, schedule, webhook_secret, prompt, COALESCE(session_mode, 'ephemeral'), enabled, last_run, run_count, created_at FROM triggers;
-      DROP TABLE triggers;
-      ALTER TABLE _triggers_new RENAME TO triggers;
-    `);
+    database.exec("BEGIN");
+    try {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS _triggers_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          type TEXT NOT NULL CHECK(type IN ('cron','webhook','manual')),
+          description TEXT DEFAULT '',
+          channel TEXT DEFAULT 'internal',
+          schedule TEXT,
+          webhook_secret TEXT,
+          prompt TEXT DEFAULT '',
+          session_mode TEXT DEFAULT 'ephemeral' CHECK(session_mode IN ('ephemeral','persistent')),
+          enabled INTEGER DEFAULT 1,
+          last_run TEXT,
+          run_count INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now'))
+        );
+        INSERT OR IGNORE INTO _triggers_new (id, name, type, description, channel, schedule, webhook_secret, prompt, session_mode, enabled, last_run, run_count, created_at)
+          SELECT id, name, type, description, channel, schedule, webhook_secret, prompt, COALESCE(session_mode, 'ephemeral'), enabled, last_run, run_count, created_at FROM triggers;
+        DROP TABLE triggers;
+        ALTER TABLE _triggers_new RENAME TO triggers;
+      `);
+      database.exec("COMMIT");
+    } catch (e) {
+      database.exec("ROLLBACK");
+      throw e;
+    }
   }
 
   // Migrate old signal_sessions to trigger_sessions (if signal_sessions exists)
@@ -174,6 +202,7 @@ export function initDb(): Database {
   mkdirSync("/atlas/workspace/inbox", { recursive: true });
   const database = new Database(DB_PATH, { create: true });
   database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA foreign_keys = ON");
   migrateSchema(database);
   createTables(database);
   return database;

@@ -26,34 +26,32 @@ function err(message: string) {
 function wakeTriggerIfAwaiting(taskId: number, responseSummary: string): void {
   const db = getDb();
 
+  // Single JOIN query to get all wake data at once
   const awaiter = db.prepare(
-    "SELECT trigger_name, session_key FROM task_awaits WHERE task_id = ?"
-  ).get(taskId) as { trigger_name: string; session_key: string } | undefined;
+    `SELECT ta.trigger_name, ta.session_key,
+            COALESCE(ts.session_id, '') AS session_id,
+            COALESCE(t.channel, 'internal') AS channel
+     FROM task_awaits ta
+     LEFT JOIN trigger_sessions ts ON ts.trigger_name = ta.trigger_name AND ts.session_key = ta.session_key
+     LEFT JOIN triggers t ON t.name = ta.trigger_name
+     WHERE ta.task_id = ?`
+  ).get(taskId) as { trigger_name: string; session_key: string; session_id: string; channel: string } | undefined;
 
   if (!awaiter) return;
 
-  // Look up session ID for resuming
-  const session = db.prepare(
-    "SELECT session_id FROM trigger_sessions WHERE trigger_name = ? AND session_key = ?"
-  ).get(awaiter.trigger_name, awaiter.session_key) as { session_id: string } | undefined;
-
-  // Look up channel for env var passthrough
-  const triggerInfo = db.prepare(
-    "SELECT channel FROM triggers WHERE name = ?"
-  ).get(awaiter.trigger_name) as { channel: string } | undefined;
-
   // Write wake file for watcher — JSON with everything needed to re-awaken the trigger
+  // Use per-task filename to prevent overwrite when two tasks complete for the same trigger
   const wakeData = JSON.stringify({
     task_id: taskId,
     trigger_name: awaiter.trigger_name,
     session_key: awaiter.session_key,
-    session_id: session?.session_id ?? "",
-    channel: triggerInfo?.channel ?? "internal",
+    session_id: awaiter.session_id,
+    channel: awaiter.channel,
     response_summary: responseSummary,
   });
 
   mkdirSync("/atlas/workspace/inbox", { recursive: true });
-  writeFileSync(`/atlas/workspace/inbox/.wake-${awaiter.trigger_name}`, wakeData);
+  writeFileSync(`/atlas/workspace/inbox/.wake-${awaiter.trigger_name}-${taskId}`, wakeData);
 
   // Cleanup await record
   db.prepare("DELETE FROM task_awaits WHERE task_id = ?").run(taskId);
@@ -87,11 +85,9 @@ if (IS_TRIGGER) {
       const db = getDb();
       const sender = `trigger:${ATLAS_TRIGGER}`;
 
-      db.prepare(
-        "INSERT INTO messages (channel, sender, content, reply_to) VALUES ('task', ?, ?, ?)"
-      ).run(sender, content, reply_to ?? null);
-
-      const message = db.prepare("SELECT * FROM messages WHERE id = last_insert_rowid()").get() as any;
+      const message = db.prepare(
+        "INSERT INTO messages (channel, sender, content, reply_to) VALUES ('task', ?, ?, ?) RETURNING *"
+      ).get(sender, content, reply_to ?? null) as any;
       const taskId = message.id;
 
       // Auto-register for re-awakening
@@ -228,19 +224,17 @@ if (!IS_TRIGGER) {
         });
       }
 
-      // Atomically claim next pending
+      // Atomically claim next pending in a single statement
       const next = db.prepare(
-        "SELECT * FROM messages WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+        `UPDATE messages SET status = 'processing', processed_at = datetime('now')
+         WHERE id = (SELECT id FROM messages WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1)
+         RETURNING *`
       ).get() as any;
       if (!next) {
         return ok({ next_task: null, message: "No pending tasks." });
       }
 
-      db.prepare(
-        "UPDATE messages SET status = 'processing', processed_at = datetime('now') WHERE id = ?"
-      ).run(next.id);
-
-      return ok({ next_task: db.prepare("SELECT * FROM messages WHERE id = ?").get(next.id) });
+      return ok({ next_task: next });
     }
   );
 
@@ -254,9 +248,15 @@ if (!IS_TRIGGER) {
     },
     async ({ task_id, response_summary }) => {
       const db = getDb();
-      db.prepare(
-        "UPDATE messages SET status = 'done', response_summary = ?, processed_at = datetime('now') WHERE id = ?"
+      const result = db.prepare(
+        "UPDATE messages SET status = 'done', response_summary = ?, processed_at = datetime('now') WHERE id = ? AND status = 'processing'"
       ).run(response_summary, task_id);
+
+      if (result.changes === 0) {
+        const msg = db.prepare("SELECT status FROM messages WHERE id = ?").get(task_id) as { status: string } | undefined;
+        if (!msg) return err(`Task ${task_id} not found`);
+        return err(`Task ${task_id} is '${msg.status}' — can only complete tasks in 'processing' status`);
+      }
 
       // Wake the trigger session that created this task
       wakeTriggerIfAwaiting(task_id, response_summary);
@@ -448,6 +448,7 @@ server.tool(
 
     db.prepare("DELETE FROM triggers WHERE name = ?").run(name);
     db.prepare("DELETE FROM trigger_sessions WHERE trigger_name = ?").run(name);
+    db.prepare("DELETE FROM task_awaits WHERE trigger_name = ?").run(name);
 
     if (existing.type === "cron") syncCrontab();
     return ok({ deleted: name, type: existing.type });

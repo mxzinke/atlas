@@ -12,7 +12,7 @@ touch "$WATCH_DIR/.wake"
 
 echo "[$(date)] Watcher started. Monitoring $WATCH_DIR"
 
-inotifywait -m "$WATCH_DIR" -e create,modify,attrib --format '%f' | while read FILENAME; do
+inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' --format '%f' | while read FILENAME; do
 
   # --- Main session wake (.wake file) ---
   if [ "$FILENAME" = ".wake" ]; then
@@ -38,24 +38,36 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --format '%f' | while read F
       echo "[$(date)] Session ended, back to sleep"
     ) 9>"$FLOCK_FILE"
 
-  # --- Trigger session re-awakening (.wake-<trigger_name> file) ---
+  # --- Trigger session re-awakening (.wake-<trigger>-<task_id> file) ---
   elif [[ "$FILENAME" == .wake-* ]]; then
-    TRIGGER_NAME="${FILENAME#.wake-}"
+    # Extract trigger name: strip .wake- prefix, then remove the -<task_id> suffix
+    _WAKE_BODY="${FILENAME#.wake-}"
+    TRIGGER_NAME="${_WAKE_BODY%-*}"
     WAKE_FILE="$WATCH_DIR/$FILENAME"
-    echo "[$(date)] Trigger wake event: $TRIGGER_NAME"
+    echo "[$(date)] Trigger wake event: $TRIGGER_NAME (file=$FILENAME)"
 
     # Run in background — don't block watcher while trigger session runs
     (
+      # Per-trigger flock: prevents concurrent sessions for the same trigger
+      flock -n 200 || { echo "[$(date)] Trigger $TRIGGER_NAME already running, skipping"; exit 0; }
+
       # Atomically move to temp to prevent race conditions
       TEMP_WAKE=$(mktemp /tmp/wake-XXXXXX.json)
       mv "$WAKE_FILE" "$TEMP_WAKE" 2>/dev/null || { rm -f "$TEMP_WAKE"; exit 0; }
 
-      # Parse JSON fields
-      TASK_ID=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('task_id',''))" "$TEMP_WAKE" 2>/dev/null || echo "")
-      SESSION_ID=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('session_id',''))" "$TEMP_WAKE" 2>/dev/null || echo "")
-      SESSION_KEY=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('session_key',''))" "$TEMP_WAKE" 2>/dev/null || echo "")
-      CHANNEL=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('channel','internal'))" "$TEMP_WAKE" 2>/dev/null || echo "internal")
-      SUMMARY=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('response_summary',''))" "$TEMP_WAKE" 2>/dev/null || echo "")
+      # Parse all JSON fields in a single jq call
+      eval "$(jq -r '{
+        task_id: (.task_id // ""),
+        session_id: (.session_id // ""),
+        session_key: (.session_key // ""),
+        channel: (.channel // "internal"),
+        summary: (.response_summary // "")
+      } | to_entries | map("WAKE_\(.key | ascii_upcase)=\(.value | @sh)") | .[]' "$TEMP_WAKE" 2>/dev/null)" || true
+      TASK_ID="${WAKE_TASK_ID:-}"
+      SESSION_ID="${WAKE_SESSION_ID:-}"
+      SESSION_KEY="${WAKE_SESSION_KEY:-}"
+      CHANNEL="${WAKE_CHANNEL:-internal}"
+      SUMMARY="${WAKE_SUMMARY:-}"
       rm -f "$TEMP_WAKE"
 
       RESUME_MSG="Task #${TASK_ID} completed. Here is the worker's result:
@@ -76,7 +88,7 @@ Relay this result to the original sender now."
       fi
 
       echo "[$(date)] Trigger $TRIGGER_NAME re-awakening done" | tee -a "$LOG"
-    ) &
+    ) 200>"/atlas/workspace/.trigger-${TRIGGER_NAME}.flock" &
   fi
 
 done

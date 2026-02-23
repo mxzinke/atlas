@@ -38,9 +38,14 @@ if [ -n "$CURRENT_SESSION" ]; then
   echo "$CURRENT_SESSION" > "$SESSION_FILE"
 fi
 
-# Check for active (processing) tasks — safety net if worker forgot to mark done
+# Check for active (processing) and pending tasks in a single query
 if [ -f "$DB" ]; then
-  ACTIVE=$(sqlite3 "$DB" "SELECT count(*) FROM messages WHERE status='processing';" 2>/dev/null || echo "0")
+  COUNTS=$(sqlite3 "$DB" "SELECT
+    (SELECT count(*) FROM messages WHERE status='processing'),
+    (SELECT count(*) FROM messages WHERE status='pending');" 2>/dev/null || echo "0|0")
+
+  ACTIVE=$(echo "$COUNTS" | cut -d'|' -f1)
+  PENDING=$(echo "$COUNTS" | cut -d'|' -f2)
 
   if [ "$ACTIVE" -gt 0 ]; then
     ACTIVE_TASK=$(sqlite3 -json "$DB" \
@@ -61,11 +66,6 @@ if [ -f "$DB" ]; then
       exit 2
     fi
   fi
-fi
-
-# Check for pending tasks
-if [ -f "$DB" ]; then
-  PENDING=$(sqlite3 "$DB" "SELECT count(*) FROM messages WHERE status='pending';" 2>/dev/null || echo "0")
 
   if [ "$PENDING" -gt 0 ]; then
     {
