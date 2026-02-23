@@ -173,3 +173,5 @@ supervisorctl start supercronic || true
 
 echo "[$(date)] Atlas init complete. First run: $FIRST_RUN"
 echo "[$(date)] Dashboard: http://127.0.0.1:8080"
+
+exit 0
