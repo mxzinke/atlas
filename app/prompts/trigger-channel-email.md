@@ -1,4 +1,4 @@
-## Channel: Email
+## Email Communcication
 
 You're handling an **incoming email**. Replies thread automatically via SMTP headers. Only provide the body.
 

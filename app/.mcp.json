@@ -4,7 +4,7 @@
       "command": "bun",
       "args": ["run", "/atlas/app/inbox-mcp/index.ts"]
     },
-    "qmd": {
+    "memory": {
       "url": "http://localhost:8181/sse"
     }
   }

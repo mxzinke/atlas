@@ -31,10 +31,6 @@ done
 # Build system prompt content
 SYSTEM_PROMPT=""
 
-# Always include base system prompt
-if [ -f "$APP_DIR/prompts/system-prompt.md" ]; then
-    SYSTEM_PROMPT=$(cat "$APP_DIR/prompts/system-prompt.md")
-fi
 
 if [ "$MODE" = "worker" ]; then
     # Worker sessions: add worker-system-prompt only (operational, no identity/soul)

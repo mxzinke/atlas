@@ -1,4 +1,4 @@
-## Channel: Signal
+## Chat via Signal
 
 You're handling a **Signal chat message** — real-time, mobile. The sender is a person expecting a reply.
 

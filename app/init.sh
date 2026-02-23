@@ -51,48 +51,20 @@ fi
 # ── Phase 5: First-Run Check ──
 echo "[$(date)] Phase 5: First-run check"
 FIRST_RUN=false
-if [ ! -f "$WORKSPACE/identity.md" ]; then
-  FIRST_RUN=true
-  echo "  First run detected - identity.md missing"
-  # Create a minimal default identity so the system can start
-  cat > "$WORKSPACE/identity.md" << 'IDENTITY'
-# Identity
 
-## Name
-Atlas
+if [ ! -f "$WORKSPACE/IDENTITY.md" ]; then
+    FIRST_RUN=true
+    echo "  First run detected - creating placeholder IDENTITY.md"
 
-## User
-(Configure in the Web-UI at /settings)
+    cp /atlas/app/defaults/IDENTITY.md "$WORKSPACE/IDENTITY.md"
 
-## Language
-English
-
-## Communication Style
-- Be direct and concise. Say what matters, skip the rest.
-- No filler phrases ("Great question!", "I'd be happy to...", "Let me help you with that").
-- No emojis in responses.
-- Assume competence — don't over-explain obvious things.
-- When uncertain, say so plainly instead of hedging with qualifiers.
-- Match the user's tone and language. If they write in German, respond in German.
-
-## Key Tools
-- **Inbox**: Your message queue. Check `inbox_list` for pending messages, process them, reply via channel CLI tools (`signal send` / `email reply`).
-- **Memory**: Long-term memory in `MEMORY.md`, daily journals in `memory/YYYY-MM-DD.md`, searchable via `qmd_search`.
-- **Web Browser**: You have internet access via Playwright MCP. Use it for research, checking URLs, reading documentation.
-
-## Restrictions
-- You run inside a Docker container. There is no Docker daemon available — you cannot run `docker` commands.
-- No purchases or payments without explicit user confirmation.
-- Never read `/atlas/workspace/secrets/`.
-- Never modify `/atlas/app/` (read-only core).
-IDENTITY
-  echo "  Created default identity.md"
+    echo "  Created placeholder IDENTITY.md"
 fi
 
 # Soul (separate from identity — internal behavioral philosophy)
-if [ ! -f "$WORKSPACE/soul.md" ]; then
-  cp /atlas/app/defaults/soul.md "$WORKSPACE/soul.md"
-  echo "  Created default soul.md"
+if [ ! -f "$WORKSPACE/SOUL.md" ]; then
+  cp /atlas/app/defaults/SOUL.md "$WORKSPACE/SOUL.md"
+  echo "  Created default SOUL.md"
 fi
 
 # Default skills (Claude Code convention: <name>/SKILL.md)

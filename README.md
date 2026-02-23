@@ -134,14 +134,15 @@ workspace/
 │   └── YYYY-MM-DD.md             # Daily journal entries
 ├── inbox/                        # SQLite database + wake file
 ├── triggers/                     # Custom trigger prompts
-├── identity.md                   # Agent personality + capabilities
+├── IDENTITY.md                   # Agent personality
+├── SOUL.md                       # Agent soul (core values)
 ├── config.yml                    # System configuration
 └── user-extensions.sh            # Custom package installs
 ```
 
 ## Configuration
 
-### identity.md
+### IDENTITY.md
 
 Defines who Atlas is — personality, language, capabilities, restrictions. Edit via web-ui at `/settings` or directly in the workspace.
 
