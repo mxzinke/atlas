@@ -52,6 +52,7 @@ function layout(title: string, content: string, active: string = ""): string {
   const nav = [
     ["/", "Dashboard", "dashboard"],
     ["/inbox", "Inbox", "inbox"],
+    ["/tasks", "Tasks", "tasks"],
     ["/triggers", "Triggers", "triggers"],
     ["/memory", "Memory", "memory"],
     ["/journal", "Journal", "journal"],
@@ -652,28 +653,30 @@ app.get("/journal/content", (c) => {
 
 // ============ CHAT ============
 app.get("/chat", (c) => {
-  const msgs = db.prepare(
-    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at DESC LIMIT 30"
-  ).all() as any[];
-
   const html = `
     <h1>Chat</h1>
     <div class="card">
-      <form hx-post="/chat" hx-target="#chat-messages" hx-swap="afterbegin" hx-on::after-request="this.reset()">
+      <form hx-post="/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-on::after-request="this.reset()">
         <div class="flex">
           <input type="text" name="content" placeholder="Type a message..." autocomplete="off" required style="flex:1">
           <button type="submit">Send</button>
         </div>
       </form>
     </div>
-    <div id="chat-messages">
-      ${msgs.map(m => chatBubble(m)).join("")}
-    </div>`;
+    <div id="chat-messages" hx-get="/chat/messages" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>`;
 
   return c.html(layout("Chat", html, "chat"));
 });
 
+app.get("/chat/messages", (c) => {
+  const msgs = db.prepare(
+    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at DESC LIMIT 30"
+  ).all() as any[];
+  return c.html(msgs.map(m => chatBubble(m)).join(""));
+});
+
 function chatBubble(m: any): string {
+  const isWaiting = m.sender === "web-ui" && (m.status === "pending" || m.status === "processing") && !m.response_summary;
   return `<div class="card" style="margin-bottom:8px">
     <div class="flex" style="justify-content:space-between">
       <span class="flex"><span class="dot" style="background:${statusColor(m.status)}"></span>
@@ -681,6 +684,8 @@ function chatBubble(m: any): string {
       <span class="text-muted">${timeAgo(m.created_at)}</span>
     </div>
     <div style="margin-top:6px">${safe(m.content)}</div>
+    ${isWaiting ? `<div style="margin-top:8px;padding:8px;background:#1a1b2e;border-radius:4px;border-left:2px solid #ff9800">
+      <span style="color:#ff9800">Thinking...</span></div>` : ""}
     ${m.response_summary ? `<div style="margin-top:8px;padding:8px;background:#1a1b2e;border-radius:4px;border-left:2px solid #7c6ef0">
       <span class="text-muted">Response:</span><br>${safe(m.response_summary)}</div>` : ""}
   </div>`;
@@ -700,7 +705,131 @@ app.post("/chat", async (c) => {
     mkdirSync(`${WS}/inbox`, { recursive: true });
     closeSync(openSync(WAKE, "w"));
   } catch {}
-  return c.html(chatBubble(msg));
+
+  // Fire trigger (like signal/email addons do)
+  const payload = JSON.stringify({
+    inbox_message_id: msg.id,
+    sender: "web-ui",
+    message: content.slice(0, 4000),
+    timestamp: msg.created_at,
+  });
+  Bun.spawn(["/atlas/app/triggers/trigger.sh", "web-chat", payload, "_default"], {
+    stdout: "ignore", stderr: "ignore",
+  });
+
+  // Return updated message list (polling will keep it fresh)
+  const msgs = db.prepare(
+    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at DESC LIMIT 30"
+  ).all() as any[];
+  return c.html(msgs.map(m => chatBubble(m)).join(""));
+});
+
+// ============ TASKS ============
+app.get("/tasks", (c) => {
+  const status = c.req.query("status") || "";
+  const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
+  const limit = 50;
+  const offset = (page - 1) * limit;
+
+  // Stats
+  const taskCounts = db.prepare(
+    "SELECT status, COUNT(*) as c FROM messages WHERE channel='task' GROUP BY status"
+  ).all() as any[];
+  const tc: Record<string, number> = {};
+  let taskTotal = 0;
+  for (const row of taskCounts) { tc[row.status] = row.c; taskTotal += row.c; }
+
+  // Filtered query
+  let countSql = "SELECT COUNT(*) as c FROM messages WHERE channel='task'";
+  let sql = "SELECT * FROM messages WHERE channel='task'";
+  const params: any[] = [];
+  if (status) { countSql += " AND status = ?"; sql += " AND status = ?"; params.push(status); }
+  sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+
+  const total = (db.prepare(countSql).get(...params) as any)?.c || 0;
+  const tasks = db.prepare(sql).all(...params, limit, offset) as any[];
+  const totalPages = Math.ceil(total / limit);
+
+  // Active awaits
+  const awaits = db.prepare(
+    `SELECT ta.task_id, ta.trigger_name, ta.session_key, ta.created_at, m.status as task_status, m.content
+     FROM task_awaits ta JOIN messages m ON ta.task_id = m.id
+     WHERE m.status IN ('pending', 'processing')
+     ORDER BY ta.created_at DESC`
+  ).all() as any[];
+
+  const filters = ["", "pending", "processing", "done", "cancelled"];
+  const filterHtml = filters.map(f =>
+    `<a href="/tasks${f ? '?status='+f : ''}" class="btn btn-sm ${status === f ? '' : 'btn-outline'}" style="margin-right:4px">${f || "All"}</a>`
+  ).join("");
+
+  const qs = status ? `&status=${status}` : "";
+  const paginationHtml = totalPages > 1 ? `<div class="flex mt-8" style="justify-content:space-between">
+    <span class="text-muted">Page ${page} of ${totalPages} (${total} tasks)</span>
+    <span>${page > 1 ? `<a href="/tasks?page=${page - 1}${qs}" class="btn btn-sm btn-outline">Prev</a> ` : ""}${page < totalPages ? `<a href="/tasks?page=${page + 1}${qs}" class="btn btn-sm btn-outline">Next</a>` : ""}</span>
+  </div>` : "";
+
+  const html = `
+    <h1>Tasks</h1>
+    <div class="grid">
+      <div class="stat"><div class="num" style="color:#ff9800">${tc["pending"] || 0}</div><div class="label">Pending</div></div>
+      <div class="stat"><div class="num" style="color:#5c9cf5">${tc["processing"] || 0}</div><div class="label">Processing</div></div>
+      <div class="stat"><div class="num" style="color:#4caf50">${tc["done"] || 0}</div><div class="label">Done</div></div>
+      <div class="stat"><div class="num" style="color:#999">${tc["cancelled"] || 0}</div><div class="label">Cancelled</div></div>
+    </div>
+
+    ${awaits.length > 0 ? `<div class="card mb-16"><h3>Active Awaits</h3>
+      <table>
+        <tr><th>Task</th><th>Trigger</th><th>Key</th><th>Status</th><th>Waiting Since</th></tr>
+        ${awaits.map(a => `<tr>
+          <td>#${a.task_id}</td>
+          <td>${safe(a.trigger_name)}</td>
+          <td><code>${safe(a.session_key)}</code></td>
+          <td><span class="badge" style="background:${statusColor(a.task_status)}20;color:${statusColor(a.task_status)}">${a.task_status}</span></td>
+          <td class="text-muted">${timeAgo(a.created_at)}</td>
+        </tr>`).join("")}
+      </table>
+    </div>` : ""}
+
+    <div class="mb-16">${filterHtml}</div>
+    <table>
+      <tr><th>ID</th><th>Content</th><th>Status</th><th>Response</th><th>Created</th></tr>
+      ${tasks.map(t => `
+        <tr class="msg-row" hx-get="/tasks/${t.id}" hx-target="#task-detail-${t.id}" hx-swap="innerHTML">
+          <td>#${t.id}</td>
+          <td>${safe((t.content || "").slice(0, 100))}${t.content?.length > 100 ? "..." : ""}</td>
+          <td><span class="badge" style="background:${statusColor(t.status)}20;color:${statusColor(t.status)}">${t.status}</span></td>
+          <td class="text-muted">${t.response_summary ? safe(t.response_summary.slice(0, 60)) + (t.response_summary.length > 60 ? "..." : "") : "-"}</td>
+          <td class="text-muted">${timeAgo(t.created_at)}</td>
+        </tr>
+        <tr id="task-detail-${t.id}"></tr>
+      `).join("")}
+    </table>
+    ${tasks.length === 0 ? '<div class="card text-muted">No tasks found.</div>' : ''}
+    ${paginationHtml}`;
+
+  return c.html(layout("Tasks", html, "tasks"));
+});
+
+app.get("/tasks/:id", (c) => {
+  const task = db.prepare("SELECT * FROM messages WHERE id = ? AND channel='task'").get(c.req.param("id")) as any;
+  if (!task) return c.html("<td colspan=5>Not found</td>");
+
+  const awaiter = db.prepare(
+    "SELECT * FROM task_awaits WHERE task_id = ?"
+  ).get(task.id) as any;
+
+  return c.html(`<td colspan="5"><div class="msg-detail">
+    <strong>ID:</strong> ${task.id} | <strong>Status:</strong> ${task.status}
+    <strong>Created:</strong> ${task.created_at}
+    ${task.processed_at ? `| <strong>Processed:</strong> ${task.processed_at}` : ""}
+    ${awaiter ? `<br><strong>Awaited by:</strong> ${safe(awaiter.trigger_name)} (key: ${safe(awaiter.session_key)})` : ""}
+    <hr style="border-color:#3a3b55;margin:8px 0">
+    <strong>Content:</strong>
+<pre style="margin:4px 0;white-space:pre-wrap">${safe(task.content)}</pre>
+    ${task.response_summary ? `<hr style="border-color:#3a3b55;margin:8px 0"><strong>Response:</strong>
+<pre style="margin:4px 0;white-space:pre-wrap">${safe(task.response_summary)}</pre>` : ""}
+  </div></td>`);
 });
 
 // ============ SETTINGS ============

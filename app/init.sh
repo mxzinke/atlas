@@ -147,6 +147,10 @@ else
   echo "  Database ready (schema + migrations applied)"
 fi
 
+# Ensure web-chat trigger exists (idempotent migration)
+sqlite3 "$DB" "INSERT OR IGNORE INTO triggers (name, type, description, channel, prompt, session_mode) VALUES (
+  'web-chat', 'manual', 'Web UI chat message handler', 'web', '', 'persistent');"
+
 # ── Phase 7: User Extensions ──
 echo "[$(date)] Phase 7: User extensions"
 if [ -f "$WORKSPACE/user-extensions.sh" ]; then
