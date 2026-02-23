@@ -13,7 +13,7 @@ The inbox is your message queue. Messages arrive from web chat, webhooks, cron t
 2. **Claim**: `inbox_mark` with status=`processing` — prevents duplicate processing
 3. **Work**: Do whatever the message asks
 4. **Reply via CLI** (external channels):
-   - Signal: `signal send "<number>" "<message>"`
+   - Signal: `signal send "<identifier>" "<message>"` (identifier = UUID, phone, or group ID)
    - Email: `email reply "<thread_id>" "<body>"`
    - Web/internal: `inbox_mark` with status=`done` and response_summary
 5. **Mark done**: `inbox_mark` with status=`done` and response_summary

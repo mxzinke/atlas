@@ -4,7 +4,7 @@
 #
 # Session key determines WHICH session to resume for persistent triggers:
 #   - Email: thread ID       → trigger.sh email-handler '{"body":"..."}' 'thread-4821'
-#   - Signal: sender number  → trigger.sh signal-chat '{"msg":"Hi"}' '+49170123456'
+#   - Signal: conversation ID → trigger.sh signal-chat '{"msg":"Hi"}' '<sender-uuid-or-group-id>'
 #   - Webhook: event group   → trigger.sh deploy-hook '{"ref":"main"}' 'repo-myapp'
 #   - No key + persistent    → uses "_default" (one global session per trigger)
 #   - Ephemeral triggers     → key is ignored, always a new session

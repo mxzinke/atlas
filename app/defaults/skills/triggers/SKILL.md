@@ -118,14 +118,14 @@ Edit `/atlas/workspace/crontab` and add this line **above** the `# === AUTO-GENE
 * * * * *  signal poll --once 2>&1 >> /atlas/logs/signal.log
 ```
 
-The poller checks for new Signal messages every minute. When a message arrives, it fires the trigger with the sender's number as the session key — so each contact gets their own persistent session.
+The poller checks for new Signal messages every minute. When a message arrives, it fires the trigger with the conversation ID as the session key — sender UUID for direct messages, group ID for group messages. Each contact/group gets their own persistent session.
 
 **CLI tools available in trigger sessions:**
 
 ```bash
-signal send +491701234567 "Hello!"
+signal send <uuid-or-group-id> "Hello!"
 signal contacts
-signal history +491701234567
+signal history <uuid-or-group-id>
 ```
 
 ## Email Integration Setup

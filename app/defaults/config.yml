@@ -18,7 +18,7 @@ memory:
 signal:
   number: ""                   # Your Signal phone number (e.g. "+491701234567")
   history_turns: 20
-  whitelist: []                # Empty = accept all, or list of allowed numbers
+  whitelist: []                # Empty = accept all, or list of allowed UUIDs, phone numbers, or group IDs
 
 # Email integration (IMAP + SMTP)
 email:
