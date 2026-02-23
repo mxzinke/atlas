@@ -48,7 +48,7 @@ function timeAgo(dt: string): string {
 }
 
 // --- Layout ---
-function layout(title: string, content: string, active: string = ""): string {
+function layout(title: string, content: string, active: string = "", mainStyle: string = ""): string {
   const nav = [
     ["/", "Dashboard", "dashboard"],
     ["/inbox", "Inbox", "inbox"],
@@ -110,9 +110,24 @@ pre{background:#1a1b2e;border:1px solid #3a3b55;border-radius:4px;padding:12px;o
 .mt-8{margin-top:8px}.mb-8{margin-bottom:8px}.mb-16{margin-bottom:16px}
 .flex{display:flex;align-items:center;gap:8px}
 .text-muted{color:#999;font-size:12px}
+.chat-container{display:flex;flex-direction:column;height:calc(100vh - 48px)}
+.chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column}
+.chat-bubble{max-width:75%;border-radius:12px;padding:10px 14px;margin-bottom:4px;word-break:break-word;white-space:pre-wrap}
+.chat-bubble.user{align-self:flex-end;background:#7c6ef0;color:#fff}
+.chat-bubble.bot{align-self:flex-start;background:#252640;border-left:2px solid #7c6ef0}
+.chat-time{font-size:11px;color:#666;margin-bottom:12px}
+.chat-time.user{text-align:right}
+.chat-input{border-top:1px solid #3a3b55;padding:12px 16px;display:flex;gap:8px}
+.chat-input input{flex:1}
+.typing-dots{align-self:flex-start;background:#252640;border-left:2px solid #7c6ef0;border-radius:12px;padding:10px 14px;margin-bottom:4px}
+.typing-dots span{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7c6ef0;margin:0 2px;animation:dotPulse 1.4s infinite ease-in-out both}
+.typing-dots span:nth-child(1){animation-delay:0s}
+.typing-dots span:nth-child(2){animation-delay:.2s}
+.typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes dotPulse{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
 </style></head><body>
 <nav><div class="logo">ATLAS</div>${links}</nav>
-<main>${content}</main>
+<main${mainStyle ? ` style="${mainStyle}"` : ""}>${content}</main>
 </body></html>`;
 }
 
@@ -654,41 +669,57 @@ app.get("/journal/content", (c) => {
 // ============ CHAT ============
 app.get("/chat", (c) => {
   const html = `
-    <h1>Chat</h1>
-    <div class="card">
-      <form hx-post="/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-on::after-request="this.reset()">
-        <div class="flex">
-          <input type="text" name="content" placeholder="Type a message..." autocomplete="off" required style="flex:1">
-          <button type="submit">Send</button>
-        </div>
+    <div class="chat-container">
+      <div class="chat-messages" id="chat-messages" hx-get="/chat/messages" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
+      <form class="chat-input" hx-post="/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-on::after-request="this.reset()">
+        <input type="text" name="content" placeholder="Type a message..." autocomplete="off" required>
+        <button type="submit">Send</button>
       </form>
     </div>
-    <div id="chat-messages" hx-get="/chat/messages" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>`;
+    <script>
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+      if (e.detail.target.id === 'chat-messages') {
+        var el = e.detail.target;
+        var isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+        var isPost = e.detail.requestConfig.verb === 'post';
+        var isInitial = !el.dataset.loaded;
+        if (isInitial) el.dataset.loaded = '1';
+        if (isNearBottom || isPost || isInitial) {
+          el.scrollTop = el.scrollHeight;
+        }
+      }
+    });
+    </script>`;
 
-  return c.html(layout("Chat", html, "chat"));
+  return c.html(layout("Chat", html, "chat", "padding:0;max-width:none"));
 });
 
 app.get("/chat/messages", (c) => {
   const msgs = db.prepare(
-    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at DESC LIMIT 30"
+    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50"
   ).all() as any[];
   return c.html(msgs.map(m => chatBubble(m)).join(""));
 });
 
 function chatBubble(m: any): string {
-  const isWaiting = m.sender === "web-ui" && (m.status === "pending" || m.status === "processing") && !m.response_summary;
-  return `<div class="card" style="margin-bottom:8px">
-    <div class="flex" style="justify-content:space-between">
-      <span class="flex"><span class="dot" style="background:${statusColor(m.status)}"></span>
-        <strong>${safe(m.sender || "You")}</strong></span>
-      <span class="text-muted">${timeAgo(m.created_at)}</span>
-    </div>
-    <div style="margin-top:6px">${safe(m.content)}</div>
-    ${isWaiting ? `<div style="margin-top:8px;padding:8px;background:#1a1b2e;border-radius:4px;border-left:2px solid #ff9800">
-      <span style="color:#ff9800">Thinking...</span></div>` : ""}
-    ${m.response_summary ? `<div style="margin-top:8px;padding:8px;background:#1a1b2e;border-radius:4px;border-left:2px solid #7c6ef0">
-      <span class="text-muted">Response:</span><br>${safe(m.response_summary)}</div>` : ""}
-  </div>`;
+  const isWaiting = (m.status === "pending" || m.status === "processing") && !m.response_summary;
+  const ts = timeAgo(m.created_at);
+  let html = "";
+
+  // User message (right-aligned)
+  html += `<div class="chat-bubble user">${safe(m.content)}</div>`;
+  html += `<div class="chat-time user">${ts}</div>`;
+
+  // Bot response (left-aligned) or thinking dots
+  if (m.response_summary) {
+    html += `<div class="chat-bubble bot">${safe(m.response_summary)}</div>`;
+    html += `<div class="chat-time">${m.processed_at ? timeAgo(m.processed_at) : ts}</div>`;
+  } else if (isWaiting) {
+    html += `<div class="typing-dots"><span></span><span></span><span></span></div>`;
+    html += `<div class="chat-time">&nbsp;</div>`;
+  }
+
+  return html;
 }
 
 app.post("/chat", async (c) => {
@@ -717,9 +748,9 @@ app.post("/chat", async (c) => {
     stdout: "ignore", stderr: "ignore",
   });
 
-  // Return updated message list (polling will keep it fresh)
+  // Return updated message list
   const msgs = db.prepare(
-    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at DESC LIMIT 30"
+    "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50"
   ).all() as any[];
   return c.html(msgs.map(m => chatBubble(m)).join(""));
 });
