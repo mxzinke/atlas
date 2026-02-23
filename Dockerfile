@@ -29,7 +29,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/supercronic
 
 # Install Claude Code (native binary)
-RUN curl -fsSL https://claude.ai/install.sh | sh
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Install Playwright + MCP
 RUN npx playwright install --with-deps chromium 2>/dev/null || true
