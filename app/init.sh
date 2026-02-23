@@ -169,6 +169,11 @@ bun run /atlas/app/hooks/generate-settings.ts || echo "  ⚠ Settings generation
 ln -sf /atlas/app/.mcp.json "$WORKSPACE/.mcp.json"
 echo "  MCP config symlinked: $WORKSPACE/.mcp.json -> /atlas/app/.mcp.json"
 
+# Symlink Claude Code settings (hooks, env) into workspace project dir
+mkdir -p "$WORKSPACE/.claude"
+ln -sf /atlas/app/.claude/settings.json "$WORKSPACE/.claude/settings.json"
+echo "  Settings symlinked: $WORKSPACE/.claude/settings.json -> /atlas/app/.claude/settings.json"
+
 # ── Phase 9: Sync Crontab from Triggers ──
 echo "[$(date)] Phase 9: Crontab sync"
 bun run /atlas/app/triggers/sync-crontab.ts || echo "  ⚠ Crontab sync failed (non-fatal)"
