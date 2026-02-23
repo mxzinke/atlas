@@ -154,7 +154,8 @@ ${CHANNEL_ADDON}"
 fi
 
 # Build Claude command
-CLAUDE_ARGS=(-p --max-turns 25)
+MCP_CONFIG="/atlas/workspace/.mcp.json"
+CLAUDE_ARGS=(-p --max-turns 25 --mcp-config "$MCP_CONFIG")
 
 if [ "$SESSION_MODE" = "persistent" ] && [ -n "${EXISTING_SESSION:-}" ]; then
   CLAUDE_ARGS+=(--resume "$EXISTING_SESSION")
