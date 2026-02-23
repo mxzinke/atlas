@@ -10,7 +10,7 @@ PROMPT_DIR="/atlas/app/prompts"
 # Helper: resolve channel-specific template with fallback
 resolve_template() {
   local suffix="$1"
-  for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-${suffix}.md" "$PROMPT_DIR/trigger-session-${suffix}.md"; do
+  for candidate in "$PROMPT_DIR/trigger-${CHANNEL}-${suffix}.md" "$PROMPT_DIR/trigger-${suffix}.md"; do
     if [ -f "$candidate" ]; then
       echo "$candidate"
       return

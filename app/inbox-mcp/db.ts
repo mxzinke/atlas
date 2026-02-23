@@ -14,10 +14,19 @@ function createTables(database: Database): void {
       sender TEXT,
       content TEXT NOT NULL,
       reply_to TEXT,
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done')),
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
       response_summary TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       processed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS task_awaits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL UNIQUE,
+      trigger_name TEXT NOT NULL,
+      session_key TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (task_id) REFERENCES messages(id)
     );
 
     CREATE TABLE IF NOT EXISTS trigger_sessions (
@@ -65,13 +74,33 @@ function migrateSchema(database: Database): void {
         sender TEXT,
         content TEXT NOT NULL,
         reply_to TEXT,
-        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done')),
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
         response_summary TEXT,
         created_at TEXT DEFAULT (datetime('now')),
         processed_at TEXT
       );
       INSERT INTO messages SELECT * FROM _messages_old;
       DROP TABLE _messages_old;
+    `);
+  }
+
+  // Migrate: add 'cancelled' to messages status constraint
+  if (msgInfo?.sql && !msgInfo.sql.includes("'cancelled'")) {
+    database.exec(`
+      ALTER TABLE messages RENAME TO _messages_status_mig;
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel TEXT NOT NULL,
+        sender TEXT,
+        content TEXT NOT NULL,
+        reply_to TEXT,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
+        response_summary TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        processed_at TEXT
+      );
+      INSERT INTO messages SELECT * FROM _messages_status_mig;
+      DROP TABLE _messages_status_mig;
     `);
   }
 

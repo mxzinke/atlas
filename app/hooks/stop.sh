@@ -13,13 +13,12 @@ if [ "${ATLAS_CLEANUP:-}" = "1" ]; then
   exit 0
 fi
 
-# Trigger session mode — messages are injected via IPC socket during the run,
-# no stop-hook polling needed. Just exit cleanly.
+# Trigger session mode — just exit, watcher handles re-awakening
 if [ -n "${ATLAS_TRIGGER:-}" ]; then
   exit 0
 fi
 
-# === Main session logic below ===
+# === Main/worker session logic below ===
 
 # Save current session ID
 CURRENT_SESSION=""
@@ -39,28 +38,48 @@ if [ -n "$CURRENT_SESSION" ]; then
   echo "$CURRENT_SESSION" > "$SESSION_FILE"
 fi
 
-# Check for pending inbox messages
+# Check for active (processing) tasks — safety net if worker forgot to mark done
 if [ -f "$DB" ]; then
-  PENDING=$(sqlite3 "$DB" "SELECT count(*) FROM messages WHERE status='pending';" 2>/dev/null || echo "0")
+  ACTIVE=$(sqlite3 "$DB" "SELECT count(*) FROM messages WHERE status='processing';" 2>/dev/null || echo "0")
 
-  if [ "$PENDING" -gt 0 ]; then
-    # Get next pending message
-    NEXT_MSG=$(sqlite3 -json "$DB" "SELECT id, channel, sender, content, created_at FROM messages WHERE status='pending' ORDER BY created_at ASC LIMIT 1;" 2>/dev/null || echo "")
+  if [ "$ACTIVE" -gt 0 ]; then
+    ACTIVE_TASK=$(sqlite3 -json "$DB" \
+      "SELECT id, sender, content FROM messages WHERE status='processing' ORDER BY created_at ASC LIMIT 1;" \
+      2>/dev/null || echo "[]")
 
-    if [ -n "$NEXT_MSG" ]; then
-      # Exit 2 = block stopping, stderr becomes feedback to Claude
+    if [ -n "$ACTIVE_TASK" ] && [ "$ACTIVE_TASK" != "[]" ]; then
       {
-        echo "--- NEW INBOX MESSAGE ---"
-        echo "$NEXT_MSG"
-        echo ""
-        echo "Process this message. Use inbox_mark to set status to 'processing', handle it, then reply via CLI (signal send / email reply) and mark done."
-        echo "$((PENDING - 1)) more messages pending in the inbox."
+        echo "<active-task-warning>"
+        echo "$ACTIVE_TASK"
+        echo "</active-task-warning>"
+        echo "<task-instruction>"
+        echo "You have an active task still in 'processing' status."
+        echo "Complete it with task_complete(task_id=<id>, response_summary=\"<result>\") before stopping."
+        echo "The response_summary is relayed directly to the original sender — write it as a real reply."
+        echo "</task-instruction>"
       } >&2
       exit 2
     fi
   fi
 fi
 
-# No pending messages - write journal reminder and sleep
-echo "No pending messages. Write a short journal entry to memory/$(date +%Y-%m-%d).md if you accomplished something relevant today."
+# Check for pending tasks
+if [ -f "$DB" ]; then
+  PENDING=$(sqlite3 "$DB" "SELECT count(*) FROM messages WHERE status='pending';" 2>/dev/null || echo "0")
+
+  if [ "$PENDING" -gt 0 ]; then
+    {
+      echo "<pending-tasks>"
+      echo "You have $PENDING pending task(s) in the queue."
+      echo "</pending-tasks>"
+      echo "<task-instruction>"
+      echo "Use get_next_task() to pick up and process the next task."
+      echo "</task-instruction>"
+    } >&2
+    exit 2
+  fi
+fi
+
+# No pending or active tasks — sleep
+echo "No pending tasks. Write a short journal entry to memory/$(date +%Y-%m-%d).md if you accomplished something relevant today."
 exit 0
