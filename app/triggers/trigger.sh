@@ -154,7 +154,7 @@ ${CHANNEL_ADDON}"
 fi
 
 # Build Claude command
-CLAUDE_ARGS=(-p --max-turns 25)
+CLAUDE_ARGS=(-p --dangerously-skip-permissions --max-turns 25)
 
 if [ "$SESSION_MODE" = "persistent" ] && [ -n "${EXISTING_SESSION:-}" ]; then
   CLAUDE_ARGS+=(--resume "$EXISTING_SESSION")

@@ -28,10 +28,10 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' 
 
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming session: $SESSION_ID"
-        claude -p --resume "$SESSION_ID" "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log || true
+        claude -p --dangerously-skip-permissions --resume "$SESSION_ID" "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log || true
       else
         echo "[$(date)] Starting new session"
-        claude -p "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log || true
+        claude -p --dangerously-skip-permissions "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log || true
       fi
 
       rm -f "$LOCK_FILE"
@@ -81,7 +81,7 @@ Relay this result to the original sender now."
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming trigger $TRIGGER_NAME (session=$SESSION_ID)" | tee -a "$LOG"
         ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
-          claude -p --resume "$SESSION_ID" "$RESUME_MSG" 2>&1 | tee -a "$LOG" || true
+          claude -p --dangerously-skip-permissions --resume "$SESSION_ID" "$RESUME_MSG" 2>&1 | tee -a "$LOG" || true
       elif [ -n "$TRIGGER_NAME" ]; then
         echo "[$(date)] No session ID for $TRIGGER_NAME — re-spawning via trigger.sh" | tee -a "$LOG"
         /atlas/app/triggers/trigger.sh "$TRIGGER_NAME" "$RESUME_MSG" "$SESSION_KEY" 2>&1 | tee -a "$LOG" || true
