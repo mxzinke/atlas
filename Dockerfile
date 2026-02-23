@@ -101,14 +101,15 @@ COPY app/nginx.conf /etc/nginx/sites-available/atlas
 RUN ln -sf /etc/nginx/sites-available/atlas /etc/nginx/sites-enabled/atlas \
     && rm -f /etc/nginx/sites-enabled/default
 
-# Grant atlas user write access to runtime directories
-RUN chown -R atlas:atlas /atlas/workspace /atlas/logs /home/atlas \
+# Grant atlas user write access to image-layer directories.
+# Volume mounts are fixed at runtime by entrypoint.sh.
+RUN chown -R atlas:atlas /atlas /home/atlas \
     && chown -R atlas:atlas /var/run /var/log/nginx /var/lib/nginx \
     && chown -R atlas:atlas /etc/supervisor
 
 WORKDIR /atlas/workspace
-USER atlas
 
 EXPOSE 8080
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/atlas.conf"]
+# Entrypoint runs as root to fix volume permissions, then drops to atlas
+ENTRYPOINT ["/atlas/app/entrypoint.sh"]

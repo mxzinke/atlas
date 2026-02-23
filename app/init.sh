@@ -8,14 +8,6 @@ echo "[$(date)] Atlas init starting..."
 
 WORKSPACE=/atlas/workspace
 
-# ── Phase 0: Fix home directory ownership ──
-# Volume mount may be owned by root from a previous deployment.
-# The atlas user needs write access to its own home directory.
-if [ -d "$HOME" ] && [ "$(stat -c '%U' "$HOME")" != "$(whoami)" ]; then
-  echo "[$(date)] Phase 0: Fixing home directory ownership"
-  sudo chown -R "$(id -u):$(id -g)" "$HOME"
-fi
-
 # ── Phase 1: Auth Check ──
 echo "[$(date)] Phase 1: Auth check"
 if [ -f "$HOME/.claude/.credentials.json" ]; then
