@@ -100,11 +100,10 @@ server.tool(
   },
   async ({ sender, content, reply_to }) => {
     const db = getDb();
-    const result = db
-      .prepare("INSERT INTO messages (channel, sender, content, reply_to) VALUES ('task', ?, ?, ?)")
+    db.prepare("INSERT INTO messages (channel, sender, content, reply_to) VALUES ('task', ?, ?, ?)")
       .run(sender ?? null, content, reply_to ?? null);
 
-    const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(result.lastInsertRowid);
+    const message = db.prepare("SELECT * FROM messages WHERE id = last_insert_rowid()").get();
 
     // Touch wake file to trigger watcher
     const wakePath = "/atlas/workspace/inbox/.wake";

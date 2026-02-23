@@ -20,6 +20,7 @@ so parallel threads don't block each other.
 import argparse
 import email as emaillib
 import email.utils
+import fnmatch
 import imaplib
 import json
 import os
@@ -333,7 +334,14 @@ def is_whitelisted(sender, whitelist):
         return True
     _, addr = emaillib.utils.parseaddr(sender)
     addr = addr.lower()
-    return any(addr == w.lower() or addr.endswith(f"@{w.lower()}") for w in whitelist)
+    for w in whitelist:
+        w_lower = w.lower()
+        if "*" in w or "?" in w:
+            if fnmatch.fnmatch(addr, w_lower):
+                return True
+        elif addr == w_lower or addr.endswith(f"@{w_lower}"):
+            return True
+    return False
 
 
 # --- Atlas inbox helper ---

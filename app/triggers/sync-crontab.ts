@@ -4,7 +4,7 @@
  * Run after any trigger create/update/delete.
  * supercronic auto-detects file changes.
  */
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
 const DB_PATH = "/atlas/workspace/inbox/atlas.db";
@@ -31,7 +31,7 @@ try {
 let cronLines: string[] = [];
 try {
   mkdirSync("/atlas/workspace/inbox", { recursive: true });
-  const db = new Database(DB_PATH, { readonly: true });
+  const db = new Database(DB_PATH, { readonly: true, create: false });
   const triggers = db.prepare(
     "SELECT name, schedule FROM triggers WHERE type = 'cron' AND enabled = 1 AND schedule IS NOT NULL"
   ).all() as { name: string; schedule: string }[];
