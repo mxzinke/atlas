@@ -16,29 +16,30 @@ fi
 # Trigger session mode
 if [ -n "${ATLAS_TRIGGER:-}" ]; then
   AWAIT_FILE="/tmp/trigger-${ATLAS_TRIGGER}-await"
+  WAKE_FILE="/tmp/trigger-${ATLAS_TRIGGER}-wake"
 
   if [ -f "$AWAIT_FILE" ]; then
     TASK_ID=$(cat "$AWAIT_FILE" | tr -d '[:space:]')
     STATUS=$(sqlite3 "$DB" "SELECT status FROM messages WHERE id=${TASK_ID};" 2>/dev/null || echo "")
-    SUMMARY=$(sqlite3 "$DB" "SELECT response_summary FROM messages WHERE id=${TASK_ID};" 2>/dev/null || echo "")
 
     if [ "$STATUS" = "done" ]; then
-      rm -f "$AWAIT_FILE"
+      SUMMARY=$(sqlite3 "$DB" "SELECT response_summary FROM messages WHERE id=${TASK_ID};" 2>/dev/null || echo "")
+      # Cleanup await/wake/mapping files
+      rm -f "$AWAIT_FILE" "$WAKE_FILE" "/tmp/trigger-await-${TASK_ID}"
       {
-        echo "--- TASK #${TASK_ID} COMPLETED ---"
-        echo ""
+        echo "<task-result task_id=\"${TASK_ID}\">"
         echo "$SUMMARY"
-        echo ""
-        echo "Relay this result to the original sender now."
+        echo "</task-result>"
+        echo "<task-instruction>"
+        echo "The worker session completed task #${TASK_ID}. Relay the result above to the original sender now."
+        echo "</task-instruction>"
       } >&2
       exit 2
     else
-      # Task still in progress — sleep and check again next turn
-      sleep 5
+      # Task still in progress — wait for wake event (inbox_mark touches wake file on done)
+      inotifywait -qq -t 30 -e modify -e attrib "$WAKE_FILE" 2>/dev/null || true
       {
-        echo "--- AWAITING TASK #${TASK_ID} ---"
-        echo "Status: ${STATUS:-pending}. Still waiting for the worker to complete."
-        echo "Check again."
+        echo "<task-status task_id=\"${TASK_ID}\">Status: ${STATUS:-pending}. Waiting for worker.</task-status>"
       } >&2
       exit 2
     fi
@@ -78,11 +79,22 @@ if [ -f "$DB" ]; then
     if [ -n "$NEXT_MSG" ]; then
       # Exit 2 = block stopping, stderr becomes feedback to Claude
       {
-        echo "--- NEW INBOX MESSAGE ---"
+        echo "<inbox-message>"
         echo "$NEXT_MSG"
+        echo "</inbox-message>"
+        echo "<task-instruction>"
+        echo "Process this inbox message:"
+        echo "1. inbox_mark(message_id=<id>, status=\"processing\")"
+        echo "2. Do the work described in the message content"
+        echo "3. inbox_mark(message_id=<id>, status=\"done\", response_summary=\"<result>\")"
         echo ""
-        echo "Process this message. Use inbox_mark to set status to 'processing', do the work, then mark done with a response_summary that clearly describes the result — the trigger session will relay it back to the original sender."
-        echo "$((PENDING - 1)) more messages pending in the inbox."
+        echo "The response_summary is critical — the trigger session relays it to the original sender."
+        echo "Write it as the actual reply: clear, complete, in a tone suitable for the channel."
+        echo "For example, if a user asked to fix a bug, write: \"Fixed the null pointer in auth.ts — the issue was..."
+        echo "not: \"Marked as done.\""
+        echo ""
+        echo "$((PENDING - 1)) more messages pending."
+        echo "</task-instruction>"
       } >&2
       exit 2
     fi

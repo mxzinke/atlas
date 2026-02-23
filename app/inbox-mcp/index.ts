@@ -1,8 +1,26 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { mkdirSync, closeSync, openSync } from "fs";
+import { mkdirSync, closeSync, openSync, existsSync, readFileSync } from "fs";
 import { getDb } from "./db";
+
+/** Touch a file (create or update mtime) */
+function touchFile(path: string): void {
+  closeSync(openSync(path, "w"));
+}
+
+/** Wake a trigger session if it's awaiting this message */
+function wakeTriggerIfAwaiting(messageId: number): void {
+  const mapPath = `/tmp/trigger-await-${messageId}`;
+  try {
+    if (existsSync(mapPath)) {
+      const triggerName = readFileSync(mapPath, "utf-8").trim();
+      if (triggerName) {
+        touchFile(`/tmp/trigger-${triggerName}-wake`);
+      }
+    }
+  } catch {}
+}
 
 function syncCrontab(): void {
   try {
@@ -58,6 +76,11 @@ server.tool(
     db.prepare(
       "UPDATE messages SET status = ?, response_summary = ?, processed_at = datetime('now') WHERE id = ?"
     ).run(status, response_summary ?? null, message_id);
+
+    // Wake the trigger session that's awaiting this task
+    if (status === "done") {
+      wakeTriggerIfAwaiting(message_id);
+    }
 
     const updated = db.prepare("SELECT * FROM messages WHERE id = ?").get(message_id);
     return {
@@ -132,9 +155,16 @@ server.tool(
       };
     }
 
-    // Write await file — stop hook polls this to keep the session alive
+    // Write await file — stop hook reads this to know which task to watch
     const awaitPath = `/tmp/trigger-${trigger_name}-await`;
     await Bun.write(awaitPath, String(message_id));
+
+    // Write reverse mapping — inbox_mark uses this to wake the right trigger
+    const mapPath = `/tmp/trigger-await-${message_id}`;
+    await Bun.write(mapPath, trigger_name);
+
+    // Create wake file — stop hook uses inotifywait on this
+    touchFile(`/tmp/trigger-${trigger_name}-wake`);
 
     return {
       content: [{ type: "text" as const, text: JSON.stringify({
