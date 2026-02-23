@@ -163,7 +163,7 @@ fi
 
 # Build Claude command
 disable_remote_mcp
-CLAUDE_ARGS=(-p --dangerously-skip-permissions --max-turns 25)
+CLAUDE_ARGS=(-p --dangerously-skip-permissions)
 
 if [ "$SESSION_MODE" = "persistent" ] && [ -n "${EXISTING_SESSION:-}" ]; then
   CLAUDE_ARGS+=(--resume "$EXISTING_SESSION")
