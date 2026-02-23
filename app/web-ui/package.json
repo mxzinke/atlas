@@ -8,11 +8,9 @@
   },
   "dependencies": {
     "hono": "^4.7.0",
-    "better-sqlite3": "^11.8.2",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/js-yaml": "^4.0.9"
   }
 }
