@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Berlin
 
-# System packages
+# System packages (without nodejs - installed separately below)
 RUN apt-get update && apt-get install -y \
     curl wget git jq ripgrep \
     inotify-tools \
@@ -11,16 +11,26 @@ RUN apt-get update && apt-get install -y \
     nginx \
     sqlite3 \
     python3 python3-pip \
-    nodejs npm \
     chromium-browser \
     openssh-client \
     ca-certificates \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 22 (required by QMD)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Bun (to /usr/local so it survives /root volume mount)
-ENV BUN_INSTALL="/usr/local"
-RUN curl -fsSL https://bun.sh/install | bash
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then BUN_ARCH="aarch64"; else BUN_ARCH="x64"; fi && \
+    curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/bun-linux-${BUN_ARCH}.zip" -o /tmp/bun.zip && \
+    unzip -o /tmp/bun.zip -d /tmp/bun-extract && \
+    mv /tmp/bun-extract/*/bun /usr/local/bin/bun && \
+    chmod +x /usr/local/bin/bun && \
+    ln -sf /usr/local/bin/bun /usr/local/bin/bunx && \
+    rm -rf /tmp/bun.zip /tmp/bun-extract
 ENV PATH="/atlas/app/bin:/atlas/workspace/bin:${PATH}"
 
 # Install supercronic (cron replacement)
