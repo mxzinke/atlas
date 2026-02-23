@@ -32,7 +32,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # Install Claude Code (native binary)
 # Use temp HOME to avoid installing into /root which gets volume-mounted
 RUN HOME=/tmp/claude-install curl -fsSL https://claude.ai/install.sh | HOME=/tmp/claude-install bash \
-    && cp /tmp/claude-install/.claude/bin/claude /usr/local/bin/claude \
+    && cp /tmp/claude-install/.local/bin/claude /usr/local/bin/claude \
     && chmod +x /usr/local/bin/claude \
     && rm -rf /tmp/claude-install
 
