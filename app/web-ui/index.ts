@@ -33,7 +33,7 @@ function channelIcon(ch: string): string {
 }
 
 function statusColor(s: string): string {
-  return s === "pending" ? "#ff9800" : s === "processing" ? "#5c9cf5" : "#4caf50";
+  return s === "pending" ? "#ff9800" : s === "processing" ? "#5c9cf5" : s === "cancelled" ? "#999" : "#4caf50";
 }
 
 function timeAgo(dt: string): string {
@@ -191,7 +191,7 @@ app.get("/inbox", (c) => {
   const msgs = db.prepare(sql).all(...params, limit, offset) as any[];
   const totalPages = Math.ceil(total / limit);
 
-  const filters = ["", "pending", "processing", "done"];
+  const filters = ["", "pending", "processing", "done", "cancelled"];
   const filterHtml = filters.map(f =>
     `<a href="/inbox${f ? '?status='+f : ''}" class="btn btn-sm ${status === f ? '' : 'btn-outline'}" style="margin-right:4px">${f || "All"}</a>`
   ).join("");

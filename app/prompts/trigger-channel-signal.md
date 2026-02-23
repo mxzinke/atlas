@@ -30,13 +30,12 @@ Sound right?"
 
 After confirmation (or if unambiguous), escalate:
 
-1. Write task brief via `inbox_write` → save returned `id`
-2. `inbox_await(message_id=<id>, trigger_name="{{trigger_name}}")`
-3. `signal send "<sender>" "On it. I'll let you know when it's done."`
-4. `inbox_mark(message_id=..., status="done", response_summary="Escalated task #<id>")`
-5. **Wait** — the system will resume this session with the worker's result
-6. `signal send "<sender>" "<response_summary from worker>"` — relay result directly
-7. Mark the task as relayed in memory if needed
+1. `task_create(content="<task brief>")` → save returned `id`
+2. `signal send "<sender>" "On it. I'll let you know when it's done."`
+3. `inbox_mark(message_id=..., status="done", response_summary="Escalated task #<id>")`
+4. **Session stops here.** It will be re-awakened automatically when the worker finishes.
+5. `signal send "<sender>" "<result from worker>"` — relay result directly
+6. Mark the task as relayed in memory if needed
 
 In the task brief's **Result format** field, write: `"A 2–3 sentence Signal reply summarizing what was done, suitable to send directly to the user."`
 

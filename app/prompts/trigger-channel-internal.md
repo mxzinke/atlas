@@ -10,15 +10,11 @@ Since there's no sender to confirm with, focus on **thorough investigation** bef
 2. `qmd_search` for relevant context
 3. Investigate: check relevant files, data, or system state as needed
 4. Scope the work — handle directly, or escalate to the worker?
-5. If escalating: write a complete task brief
+5. If escalating: write a complete task brief via `task_create`
 
-For internal events, `inbox_await` is optional. If the trigger doesn't need to do anything with the result (no one to notify), you can skip it and just write the task brief.
+The system automatically registers for re-awakening when you create a task. If you need to act on the worker's result (e.g. writing a summary to memory, triggering a follow-up), your session will be re-awakened with the result when the worker finishes.
 
-If the result does need to be acted on (e.g. writing a summary to memory, triggering a follow-up), use:
-
-1. `inbox_write(...)` → save returned `id`
-2. `inbox_await(message_id=<id>, trigger_name="{{trigger_name}}")`
-3. When the result arrives: write it to memory or take the appropriate follow-up action
+If you don't need to act on the result (fire-and-forget), you can still create the task — the re-awakening will simply be ignored if your session has ended.
 
 ## Writing Briefs for Internal Events
 

@@ -35,13 +35,12 @@ Best,"
 
 After confirmation (or if unambiguous), escalate:
 
-1. Write task brief via `inbox_write` → save returned `id`
-2. `inbox_await(message_id=<id>, trigger_name="{{trigger_name}}")`
-3. Optionally send a brief holding reply: `email reply "<thread_id>" "On it — I'll follow up once it's done."`
-4. `inbox_mark(message_id=..., status="done", response_summary="Escalated task #<id>")`
-5. **Wait** — the system will resume this session with the worker's result
-6. `email reply "<thread_id>" "<response_summary from worker>"` — relay result as a proper reply
-7. Mark the task as relayed in memory if needed
+1. `task_create(content="<task brief>")` → save returned `id`
+2. Optionally send a brief holding reply: `email reply "<thread_id>" "On it — I'll follow up once it's done."`
+3. `inbox_mark(message_id=..., status="done", response_summary="Escalated task #<id>")`
+4. **Session stops here.** It will be re-awakened automatically when the worker finishes.
+5. `email reply "<thread_id>" "<result from worker>"` — relay result as a proper reply
+6. Mark the task as relayed in memory if needed
 
 In the task brief's **Result format** field, write: `"A plain-text email reply body (no headers, no greeting) summarizing what was done, suitable to send directly via email reply."` Include the `thread_id` in the **Details** field so the worker knows where to send it (for reference only — you will send the reply).
 
