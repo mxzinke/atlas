@@ -5,6 +5,16 @@ SESSION_FILE=/atlas/workspace/.last-session-id
 WATCH_DIR=/atlas/workspace/inbox
 LOCK_FILE=/atlas/workspace/.session-running
 FLOCK_FILE=/atlas/workspace/.session.flock
+CLAUDE_JSON="$HOME/.claude.json"
+
+# Disable remote MCP connectors that hang on startup.
+# Claude Code caches the gate value from .claude.json; patching it
+# before each invocation prevents the remote MCP connection attempt.
+disable_remote_mcp() {
+  [ -f "$CLAUDE_JSON" ] || return 0
+  jq '.cachedGrowthBookFeatures.tengu_claudeai_mcp_connectors = false' \
+    "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+}
 
 # Ensure watch directory exists
 mkdir -p "$WATCH_DIR"
@@ -25,6 +35,8 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' 
       touch "$LOCK_FILE"  # web-ui status indicator
 
       SESSION_ID=$(cat "$SESSION_FILE" 2>/dev/null || echo "")
+
+      disable_remote_mcp
 
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming session: $SESSION_ID"
@@ -77,6 +89,8 @@ ${SUMMARY}
 Relay this result to the original sender now."
 
       LOG="/atlas/logs/trigger-${TRIGGER_NAME}.log"
+
+      disable_remote_mcp
 
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming trigger $TRIGGER_NAME (session=$SESSION_ID)" | tee -a "$LOG"

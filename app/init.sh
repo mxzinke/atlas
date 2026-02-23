@@ -8,6 +8,14 @@ echo "[$(date)] Atlas init starting..."
 
 WORKSPACE=/atlas/workspace
 
+# ── Phase 0: Fix home directory ownership ──
+# Volume mount may be owned by root from a previous deployment.
+# The atlas user needs write access to its own home directory.
+if [ -d "$HOME" ] && [ "$(stat -c '%U' "$HOME")" != "$(whoami)" ]; then
+  echo "[$(date)] Phase 0: Fixing home directory ownership"
+  sudo chown -R "$(id -u):$(id -g)" "$HOME"
+fi
+
 # ── Phase 1: Auth Check ──
 echo "[$(date)] Phase 1: Auth check"
 if [ -f "$HOME/.claude/.credentials.json" ]; then
@@ -16,7 +24,7 @@ elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "  API key configured"
 else
   echo "  ⚠ No authentication configured!"
-  echo "  Run: docker run -it --rm -v \$(pwd)/atlas-home:/root atlas claude login"
+  echo "  Run: docker run -it --rm -v \$(pwd)/atlas-home:/home/atlas atlas claude login"
   echo "  Or set ANTHROPIC_API_KEY in docker-compose.yml"
   # Don't exit - web-ui should still start for setup instructions
 fi
@@ -169,10 +177,18 @@ bun run /atlas/app/hooks/generate-settings.ts || echo "  ⚠ Settings generation
 ln -sf /atlas/app/.mcp.json "$WORKSPACE/.mcp.json"
 echo "  MCP config symlinked: $WORKSPACE/.mcp.json -> /atlas/app/.mcp.json"
 
-# Symlink Claude Code settings (hooks, env) into workspace project dir
+# Symlink Claude Code settings (hooks, env, permissions) into workspace project dir
 mkdir -p "$WORKSPACE/.claude"
 ln -sf /atlas/app/.claude/settings.json "$WORKSPACE/.claude/settings.json"
 echo "  Settings symlinked: $WORKSPACE/.claude/settings.json -> /atlas/app/.claude/settings.json"
+
+# Disable remote MCP connectors (claudeai-mcp) that cause session hangs.
+# Claude Code caches the gate value from .claude.json on startup.
+if [ -f "$HOME/.claude.json" ] && command -v jq &>/dev/null; then
+  jq '.cachedGrowthBookFeatures.tengu_claudeai_mcp_connectors = false' \
+    "$HOME/.claude.json" > "$HOME/.claude.json.tmp" && mv "$HOME/.claude.json.tmp" "$HOME/.claude.json"
+  echo "  Remote MCP connectors disabled in .claude.json"
+fi
 
 # ── Phase 9: Sync Crontab from Triggers ──
 echo "[$(date)] Phase 9: Crontab sync"

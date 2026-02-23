@@ -68,6 +68,20 @@ const settings: Record<string, unknown> = {
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
     CLAUDE_MODEL: models.main,
   },
+  permissions: {
+    allow: [
+      "Bash(*)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "mcp__inbox__*",
+      "mcp__qmd__*",
+    ],
+  },
   hooks: {
     SessionStart: [
       {

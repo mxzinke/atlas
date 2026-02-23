@@ -19,11 +19,19 @@ DB="/atlas/workspace/inbox/atlas.db"
 WORKSPACE="/atlas/workspace"
 PROMPT_DIR="/atlas/app/prompts"
 LOG="/atlas/logs/trigger-${TRIGGER_NAME}.log"
+CLAUDE_JSON="$HOME/.claude.json"
 
 if [ ! -f "$DB" ]; then
   echo "[$(date)] ERROR: Database not found: $DB" >&2
   exit 1
 fi
+
+# Disable remote MCP connectors that hang on startup
+disable_remote_mcp() {
+  [ -f "$CLAUDE_JSON" ] || return 0
+  jq '.cachedGrowthBookFeatures.tengu_claudeai_mcp_connectors = false' \
+    "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+}
 
 # Safe template substitution using Python (no sed injection risk from payload content)
 safe_replace() {
@@ -154,6 +162,7 @@ ${CHANNEL_ADDON}"
 fi
 
 # Build Claude command
+disable_remote_mcp
 CLAUDE_ARGS=(-p --dangerously-skip-permissions --max-turns 25)
 
 if [ "$SESSION_MODE" = "persistent" ] && [ -n "${EXISTING_SESSION:-}" ]; then

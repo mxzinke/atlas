@@ -14,8 +14,12 @@ RUN apt-get update && apt-get install -y \
     chromium-browser \
     openssh-client \
     ca-certificates \
-    unzip \
+    unzip sudo \
     && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user with sudo access
+RUN useradd -m -s /bin/bash -G sudo atlas \
+    && echo "atlas ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/atlas
 
 # Install Node.js 22 (required by QMD)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -32,6 +36,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
     ln -sf /usr/local/bin/bun /usr/local/bin/bunx && \
     rm -rf /tmp/bun.zip /tmp/bun-extract
 ENV PATH="/atlas/app/bin:/atlas/workspace/bin:${PATH}"
+ENV HOME=/home/atlas
 
 # Install supercronic (cron replacement)
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -96,7 +101,13 @@ COPY app/nginx.conf /etc/nginx/sites-available/atlas
 RUN ln -sf /etc/nginx/sites-available/atlas /etc/nginx/sites-enabled/atlas \
     && rm -f /etc/nginx/sites-enabled/default
 
+# Grant atlas user write access to runtime directories
+RUN chown -R atlas:atlas /atlas/workspace /atlas/logs /home/atlas \
+    && chown -R atlas:atlas /var/run /var/log/nginx /var/lib/nginx \
+    && chown -R atlas:atlas /etc/supervisor
+
 WORKDIR /atlas/workspace
+USER atlas
 
 EXPOSE 8080
 

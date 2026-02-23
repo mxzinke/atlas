@@ -6,7 +6,7 @@ services:
     container_name: atlas
     restart: unless-stopped
     volumes:
-      - ./atlas-home:/root
+      - ./atlas-home:/home/atlas
       - ./workspace:/atlas/workspace
       - ./logs:/atlas/logs
     environment:
