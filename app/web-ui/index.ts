@@ -866,23 +866,38 @@ app.get("/chat", (c) => {
 });
 
 app.get("/chat/conversation", (c) => {
+  const TYPING = '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>';
+
+  // Fallback: render DB messages (channel='web') while session/JSONL is not ready yet
+  const dbFallback = () => {
+    const rows = db
+      .prepare("SELECT content, created_at FROM messages WHERE channel='web' ORDER BY created_at ASC, id ASC")
+      .all() as { content: string; created_at: string }[];
+    if (rows.length === 0) {
+      return '<div class="chat-bubble bot" style="opacity:0.5">Send a message to start a conversation.</div>';
+    }
+    return rows
+      .map(r => `<div class="chat-bubble user">${safe(r.content)}</div><div class="chat-time user">${timeAgo(r.created_at)}</div>`)
+      .join("") + TYPING;
+  };
+
   // Look up the web-chat trigger session
   const session = db
     .prepare("SELECT session_id FROM trigger_sessions WHERE trigger_name='web-chat' AND session_key='_default' LIMIT 1")
     .get() as any;
 
   if (!session) {
-    return c.html('<div class="chat-bubble bot" style="opacity:0.5">No active chat session. Send a message to start.</div>');
+    return c.html(dbFallback());
   }
 
   const filePath = findSessionFile(session.session_id);
   if (!filePath) {
-    return c.html('<div class="chat-bubble bot" style="opacity:0.5">Session file not found. Send a message to start a new session.</div>');
+    return c.html(dbFallback());
   }
 
   const messages = parseSessionMessages(filePath);
   if (messages.length === 0) {
-    return c.html('<div class="chat-bubble bot" style="opacity:0.5">Session is starting...</div>');
+    return c.html(dbFallback());
   }
 
   const html = renderConversation(messages);
@@ -895,7 +910,7 @@ app.get("/chat/conversation", (c) => {
 
   // Show typing indicator if session is running and last message isn't assistant text
   if (isRunning && !isAssistantLast) {
-    return c.html(html + '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>');
+    return c.html(html + TYPING);
   }
 
   return c.html(html);
