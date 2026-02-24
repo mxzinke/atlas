@@ -220,6 +220,7 @@ def cmd_incoming(config, sender, message, name="", timestamp=""):
     try:
         subprocess.Popen(
             [TRIGGER_SCRIPT, TRIGGER_NAME, payload, sender],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

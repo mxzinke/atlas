@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+export PATH=/atlas/app/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+
 SESSION_FILE=/atlas/workspace/.last-session-id
 WATCH_DIR=/atlas/workspace/inbox
 LOCK_FILE=/atlas/workspace/.session-running

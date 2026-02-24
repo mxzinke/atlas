@@ -94,27 +94,6 @@ if [ "$SESSION_MODE" = "persistent" ]; then
     "SELECT session_id FROM trigger_sessions WHERE trigger_name='${TRIGGER_NAME//\'/\'\'}' AND session_key='${SESSION_KEY//\'/\'\'}' LIMIT 1;" 2>/dev/null || echo "")
 
   if [ -n "$EXISTING_SESSION" ]; then
-    # Guard: if the session JSONL ends with a queue-operation entry, the container was
-    # killed mid-IPC-inject. Resuming such a session hangs indefinitely — clear it.
-    JSONL_PATH=$(python3 -c "
-import os, hashlib, glob
-proj = hashlib.md5(b'/atlas/workspace').hexdigest()
-# Claude Code hashes the CWD path for the project dir name
-# Try known path format: -atlas-workspace
-candidates = glob.glob(os.path.expanduser('~/.claude/projects/*/${EXISTING_SESSION}.jsonl'))
-print(candidates[0] if candidates else '')
-" 2>/dev/null)
-    if [ -n "$JSONL_PATH" ] && [ -f "$JSONL_PATH" ]; then
-      LAST_TYPE=$(tail -1 "$JSONL_PATH" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('type',''))" 2>/dev/null || echo "")
-      if [ "$LAST_TYPE" = "queue-operation" ]; then
-        echo "[$(date)] Corrupted session $EXISTING_SESSION (ended mid-IPC-inject) — clearing, will start fresh" | tee -a "$LOG"
-        sqlite3 "$DB" "DELETE FROM trigger_sessions WHERE trigger_name='${TRIGGER_NAME//\'/\'\'}' AND session_key='${SESSION_KEY//\'/\'\'}';" 2>/dev/null || true
-        EXISTING_SESSION=""
-      fi
-    fi
-  fi
-
-  if [ -n "$EXISTING_SESSION" ]; then
     SOCKET="/tmp/claudec-${EXISTING_SESSION}.sock"
 
     if [ -S "$SOCKET" ]; then
@@ -182,7 +161,7 @@ TRIGGER_OUT=$(mktemp /tmp/trigger-out-XXXXXX.json)
 # with "Claude Code cannot be launched inside another Claude Code session"
 ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
   env -u CLAUDECODE \
-  claude-atlas --mode trigger "${CLAUDE_ARGS[@]}" --output-format json "$PROMPT" > "$TRIGGER_OUT" 2>>"$LOG" || true
+  claude-atlas --mode trigger "${CLAUDE_ARGS[@]}" --output-format json "$PROMPT" < /dev/null > "$TRIGGER_OUT" 2>>"$LOG" || true
 
 # Log the text result from JSON output
 python3 -c "

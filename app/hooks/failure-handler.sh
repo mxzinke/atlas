@@ -73,12 +73,13 @@ on_session_failure() {
   done
 
   echo "[$(date)] Backing off ${BACKOFF}s before retry (attempt $((FAIL_COUNT + 1)))"
-  sleep "$BACKOFF"
 
-  # Reset stuck tasks so they can be reprocessed
-  reset_processing_tasks
-
-  # Self-trigger retry via .wake
-  touch "$WORKSPACE/inbox/.wake"
-  echo "[$(date)] Retry triggered via .wake touch"
+  # Sleep in background so the caller's flock is released immediately.
+  # This prevents the backoff from blocking all incoming wake events.
+  (
+    sleep "$BACKOFF"
+    reset_processing_tasks
+    touch "$WORKSPACE/inbox/.wake"
+    echo "[$(date)] Retry triggered via .wake touch (after ${BACKOFF}s backoff)" >> /atlas/logs/watcher.log
+  ) &
 }
