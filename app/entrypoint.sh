@@ -16,4 +16,8 @@ chown -R atlas:atlas /var/log/nginx /var/lib/nginx
 rm -f /home/atlas/.cache/qmd/*.pid /tmp/qmd*.pid 2>/dev/null || true
 
 # Drop to atlas user and start supervisord
-exec sudo -u atlas -E /usr/bin/supervisord -c /etc/supervisor/conf.d/atlas.conf
+# Pass PATH explicitly — sudo env_reset strips the Dockerfile ENV PATH otherwise
+exec sudo -u atlas \
+  PATH="/atlas/app/bin:/atlas/workspace/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  HOME="/home/atlas" \
+  /usr/bin/supervisord -c /etc/supervisor/conf.d/atlas.conf
