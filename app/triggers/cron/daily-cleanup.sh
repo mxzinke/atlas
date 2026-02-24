@@ -5,6 +5,17 @@ SESSION_FILE=/atlas/workspace/.last-session-id
 CLEANUP_DONE=/atlas/workspace/.cleanup-done
 DB=/atlas/workspace/inbox/atlas.db
 
+# Prune old data (30 days)
+if [ -f "$DB" ]; then
+  sqlite3 "$DB" <<'SQL'
+    DELETE FROM tasks WHERE status IN ('done','cancelled') AND created_at < datetime('now', '-30 days');
+    DELETE FROM messages WHERE created_at < datetime('now', '-30 days');
+    DELETE FROM trigger_sessions WHERE updated_at < datetime('now', '-30 days');
+    DELETE FROM task_awaits WHERE created_at < datetime('now', '-30 days');
+SQL
+  echo "[$(date)] DB pruned (30-day retention)"
+fi
+
 # Check if there was activity in the last day
 MSGS=0
 if [ -f "$DB" ]; then
