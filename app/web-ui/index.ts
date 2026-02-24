@@ -227,16 +227,20 @@ function parseSessionMessages(filePath: string): ParsedMessage[] {
     const ts = obj.timestamp;
 
     if (obj.type === "user") {
-      if (typeof obj.message === "string") {
+      // Support both old format (obj.message: string|array) and new format (obj.message: {role,content})
+      const rawMsg = obj.message;
+      const msgContent = (rawMsg && typeof rawMsg === "object" && !Array.isArray(rawMsg) && rawMsg.content !== undefined)
+        ? rawMsg.content : rawMsg;
+
+      if (typeof msgContent === "string") {
         // Try to extract clean user text from inject template payload JSON
-        let text = obj.message;
+        let text = msgContent;
         try {
           const parsed = JSON.parse(text);
           if (parsed.message) text = parsed.message;
         } catch {}
         // Skip if this looks like a system/inject template (starts with "New event for trigger")
         if (/^New event for trigger /.test(text)) {
-          // Try to extract the actual payload JSON from the inject template
           const payloadMatch = text.match(/\n\n(\{[\s\S]*\})\n\n/);
           if (payloadMatch) {
             try {
@@ -246,9 +250,9 @@ function parseSessionMessages(filePath: string): ParsedMessage[] {
           }
         }
         messages.push({ type: "user-text", content: text, timestamp: ts });
-      } else if (Array.isArray(obj.message)) {
+      } else if (Array.isArray(msgContent)) {
         // Could contain tool_result blocks
-        for (const block of obj.message) {
+        for (const block of msgContent) {
           if (block.type === "tool_result") {
             const resultContent = Array.isArray(block.content)
               ? block.content.map((c: any) => c.text || "").join("\n")
@@ -265,8 +269,12 @@ function parseSessionMessages(filePath: string): ParsedMessage[] {
         }
       }
     } else if (obj.type === "assistant") {
-      if (!Array.isArray(obj.message)) continue;
-      for (const block of obj.message) {
+      // Support both old format (obj.message: array) and new format (obj.message: {role,content})
+      const rawMsg = obj.message;
+      const msgBlocks = (rawMsg && typeof rawMsg === "object" && !Array.isArray(rawMsg) && Array.isArray(rawMsg.content))
+        ? rawMsg.content : rawMsg;
+      if (!Array.isArray(msgBlocks)) continue;
+      for (const block of msgBlocks) {
         if (block.type === "text" && block.text) {
           messages.push({ type: "assistant-text", content: block.text, timestamp: ts });
         } else if (block.type === "tool_use") {
@@ -868,48 +876,57 @@ app.get("/chat", (c) => {
 app.get("/chat/conversation", (c) => {
   const TYPING = '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>';
 
-  // Fallback: render DB messages (channel='web') while session/JSONL is not ready yet
-  const dbFallback = () => {
-    const rows = db
-      .prepare("SELECT content, created_at FROM messages WHERE channel='web' ORDER BY created_at ASC, id ASC")
-      .all() as { content: string; created_at: string }[];
-    if (rows.length === 0) {
-      return '<div class="chat-bubble bot" style="opacity:0.5">Send a message to start a conversation.</div>';
-    }
-    return rows
-      .map(r => `<div class="chat-bubble user">${safe(r.content)}</div><div class="chat-time user">${timeAgo(r.created_at)}</div>`)
-      .join("") + TYPING;
-  };
+  // User messages: always from DB (ground truth — JSONL entries are just trigger boilerplate)
+  const dbMessages = db
+    .prepare("SELECT content, created_at FROM messages WHERE channel='web' ORDER BY created_at ASC, id ASC")
+    .all() as { content: string; created_at: string }[];
 
-  // Look up the web-chat trigger session
+  // Assistant messages: from JSONL session file
   const session = db
     .prepare("SELECT session_id FROM trigger_sessions WHERE trigger_name='web-chat' AND session_key='_default' LIMIT 1")
     .get() as any;
 
-  if (!session) {
-    return c.html(dbFallback());
+  let assistantMsgs: ParsedMessage[] = [];
+  let isRunning = false;
+  if (session) {
+    const filePath = findSessionFile(session.session_id);
+    if (filePath) {
+      const all = parseSessionMessages(filePath);
+      // Drop user-text entries from JSONL — those are trigger boilerplate, not real user text
+      assistantMsgs = all.filter(m => m.type !== "user-text");
+      isRunning = existsSync(`/tmp/claudec-${session.session_id}.sock`);
+    }
   }
 
-  const filePath = findSessionFile(session.session_id);
-  if (!filePath) {
-    return c.html(dbFallback());
+  if (dbMessages.length === 0 && assistantMsgs.length === 0) {
+    return c.html('<div class="chat-bubble bot" style="opacity:0.5">Send a message to start a conversation.</div>');
   }
 
-  const messages = parseSessionMessages(filePath);
-  if (messages.length === 0) {
-    return c.html(dbFallback());
-  }
+  // Merge: DB user messages + JSONL assistant/tool messages, sorted by timestamp
+  // SQLite timestamps are "YYYY-MM-DD HH:MM:SS"; JSONL are ISO "YYYY-MM-DDTHH:MM:SS.mmmZ" — both sort correctly after normalising the space
+  const combined: ParsedMessage[] = [
+    ...dbMessages.map(m => ({
+      type: "user-text" as const,
+      content: m.content,
+      timestamp: m.created_at.replace(" ", "T"),
+    })),
+    ...assistantMsgs,
+  ];
+  combined.sort((a, b) => {
+    const ta = a.timestamp || "";
+    const tb = b.timestamp || "";
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    // Same timestamp: user before assistant
+    return (a.type === "user-text" ? 0 : 1) - (b.type === "user-text" ? 0 : 1);
+  });
 
-  const html = renderConversation(messages);
-
-  // Check if session is still running (has active IPC socket)
-  const socket = `/tmp/claudec-${session.session_id}.sock`;
-  const isRunning = existsSync(socket);
-  const lastMsg = messages[messages.length - 1];
+  const html = renderConversation(combined);
+  const lastMsg = combined[combined.length - 1];
   const isAssistantLast = lastMsg.type.startsWith("assistant-");
 
-  // Show typing indicator if session is running and last message isn't assistant text
-  if (isRunning && !isAssistantLast) {
+  // Show typing while session is being set up or actively running
+  const showTyping = (!session && dbMessages.length > 0) || (!!session && isRunning);
+  if (showTyping && !isAssistantLast) {
     return c.html(html + TYPING);
   }
 
@@ -948,29 +965,36 @@ app.post("/chat", async (c) => {
     },
   );
 
-  // Return conversation from JSONL (or just the user message if session hasn't started yet)
+  // Return all DB messages (includes the just-inserted one) + any prior assistant responses + typing indicator
+  const TYPING = '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>';
+  const dbMessages = db
+    .prepare("SELECT content, created_at FROM messages WHERE channel='web' ORDER BY created_at ASC, id ASC")
+    .all() as { content: string; created_at: string }[];
+
   const session = db
     .prepare("SELECT session_id FROM trigger_sessions WHERE trigger_name='web-chat' AND session_key='_default' LIMIT 1")
     .get() as any;
 
+  let assistantMsgs: ParsedMessage[] = [];
   if (session) {
     const filePath = findSessionFile(session.session_id);
     if (filePath) {
-      const messages = parseSessionMessages(filePath);
-      // Append the new user message that hasn't been injected yet
-      messages.push({ type: "user-text", content });
-      return c.html(
-        renderConversation(messages) +
-        '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>'
-      );
+      const all = parseSessionMessages(filePath);
+      assistantMsgs = all.filter(m => m.type !== "user-text");
     }
   }
 
-  // No session yet — show just the sent message with typing indicator
-  return c.html(
-    `<div class="chat-bubble user">${safe(content)}</div><div class="chat-time user">just now</div>` +
-    '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>'
-  );
+  const combined: ParsedMessage[] = [
+    ...dbMessages.map(m => ({ type: "user-text" as const, content: m.content, timestamp: m.created_at.replace(" ", "T") })),
+    ...assistantMsgs,
+  ];
+  combined.sort((a, b) => {
+    const ta = a.timestamp || "", tb = b.timestamp || "";
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    return (a.type === "user-text" ? 0 : 1) - (b.type === "user-text" ? 0 : 1);
+  });
+
+  return c.html(renderConversation(combined) + TYPING);
 });
 
 // ============ TASKS ============
