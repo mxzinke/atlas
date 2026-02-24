@@ -1,6 +1,6 @@
 ---
 name: triggers
-description: How to create and manage cron, webhook, and manual triggers. Also covers Signal and Email integration setup.
+description: How to create and manage triggers via the CLI. Covers cron, webhook, manual, Signal and Email integration.
 ---
 
 # Triggers
@@ -21,7 +21,7 @@ Scheduled execution using standard cron syntax.
 
 ### Webhook
 HTTP endpoints at `/api/webhook/<trigger-name>`. External services POST data here.
-- Payload replaces `{{payload}}` in the prompt template
+- Payload replaces `{{payload}}` in the prompt file
 - Optional authentication via `X-Webhook-Secret` header
 
 ### Manual
@@ -36,81 +36,124 @@ No schedule, no endpoint. Fired via the web-ui "Run" button or by request.
 
 Persistent triggers maintain separate sessions per key (e.g., per contact, per thread). If no key is provided, a single default session is used per trigger.
 
-## MCP Tools
+## CLI Commands
 
-| Tool | Use |
-|------|-----|
-| `trigger_list` | List all triggers (optional type filter) |
-| `trigger_create` | Create new trigger |
-| `trigger_update` | Update fields (description, schedule, prompt, session_mode, enabled) |
-| `trigger_delete` | Delete by name |
+| Command | Use |
+|---------|-----|
+| `trigger create ...` | Create trigger |
+| `trigger update ...` | Update trigger fields |
+| `trigger delete --name=foo` | Delete trigger |
+| `trigger enable --name=foo` | Enable trigger |
+| `trigger disable --name=foo` | Disable trigger |
+| `trigger list` | List all triggers |
 
 ## Creating Triggers
 
-### Cron Trigger (fully automatic)
+### Cron Trigger
 
+```bash
+trigger create \
+  --name=daily-report \
+  --type=cron \
+  --schedule="0 9 * * *" \
+  --description="Daily morning report" \
+  --channel=internal
 ```
-trigger_create(
-  name="github-issues",
-  type="cron",
-  schedule="0 * * * *",
-  session_mode="ephemeral",
-  description="Hourly GitHub issue check",
-  channel="internal",
-  prompt="Check GitHub repos for new issues. Escalate critical ones to main session."
-)
-```
+
+Then create the prompt file at `workspace/triggers/daily-report/prompt.md`.
 
 After creation, the crontab is synced automatically — supercronic picks it up. **Nothing else needed.**
 
-### Webhook Trigger (endpoint ready immediately)
+### Webhook Trigger
 
+```bash
+trigger create \
+  --name=deploy-hook \
+  --type=webhook \
+  --secret=my-secret-token \
+  --description="Post-deploy notification"
 ```
-trigger_create(
-  name="deploy-hook",
-  type="webhook",
-  session_mode="ephemeral",
-  description="Post-deploy notification",
-  channel="internal",
-  webhook_secret="my-secret-token",
-  prompt="Deployment event received:\n\n{{payload}}\n\nCheck status and escalate failures."
-)
-```
+
+Prompt file: `workspace/triggers/deploy-hook/prompt.md`
+Use `{{payload}}` in prompt for the webhook body.
 
 The endpoint `http://<host>:8080/api/webhook/deploy-hook` is live immediately. External services POST to this URL with the optional `X-Webhook-Secret` header.
 
 ### Manual Trigger
 
-```
-trigger_create(
-  name="weekly-report",
-  type="manual",
-  session_mode="ephemeral",
-  description="Generate weekly summary report",
-  channel="internal",
-  prompt="Generate a summary of this week's activity from memory and inbox."
-)
+```bash
+trigger create \
+  --name=weekly-report \
+  --type=manual \
+  --description="Generate weekly summary"
 ```
 
-Fired via the web-ui dashboard or programmatically.
+Fired via the web-ui dashboard "Run" button.
+
+## Prompt Files
+
+Each trigger's prompt lives at:
+```
+workspace/triggers/<name>/prompt.md
+```
+
+The `trigger create` command creates the directory automatically. Write the full trigger instruction in this file. If the `prompt` field in DB is empty (default after CLI create), this file is used automatically.
+
+Example `workspace/triggers/daily-report/prompt.md`:
+```
+Check the inbox for any unread messages and summarize activity from the past 24 hours.
+Escalate anything urgent to the main session via task_create.
+```
 
 ## Signal Integration Setup
 
-The Signal add-on requires a trigger plus a polling cron entry.
-
-**Step 1: Create the trigger**
-
-```
-trigger_create(
-  name="signal-chat",
-  type="webhook",
-  session_mode="persistent",
-  channel="signal",
-  prompt="New Signal message:\n\n{{payload}}"
-)
+**Prerequisites:** `signal-cli` installed and registered (add install to `workspace/user-extensions.sh`):
+```bash
+apt-get install -y signal-cli
 ```
 
-**Step 2: Add polling to crontab**
+One-time interactive registration (run manually inside the container):
+```bash
+signal-cli -a +491701234567 register
+# If Signal requires a captcha, the above will fail with a captcha error.
+# In that case:
+#   1. Let human visit https://signalcaptchas.org/registration/generate and complete the captcha
+#   2. Copy the captcha url (format: "signalcaptcha://<signal-recaptcha-token>")
+#   3. Re-run: signal-cli -a +491701234567 register --captcha <signal-recaptcha-token>
+signal-cli -a +491701234567 verify 123-456 # Code from SMS
+```
+
+**Step 1: Configure `workspace/config.yml`**
+
+```yaml
+signal:
+  number: "+491701234567"
+  whitelist: []   # empty = accept all contacts
+```
+
+**Step 2: Create the trigger**
+
+```bash
+trigger create \
+  --name=signal-chat \
+  --type=webhook \
+  --session-mode=persistent \
+  --channel=signal \
+  --description="Signal messenger conversations"
+```
+
+Then write `workspace/triggers/signal-chat/prompt.md`:
+```
+New Signal message received:
+
+{{payload}}
+
+The payload contains inbox_message_id and sender (phone number).
+Reply directly via CLI: signal send <number> "message"
+Escalate complex tasks via task_create.
+```
+
+**Step 3: Add polling to crontab**
 
 Edit `/atlas/workspace/crontab` and add this line **above** the `# === AUTO-GENERATED TRIGGERS` marker:
 
@@ -130,21 +173,53 @@ signal history +491701234567
 
 ## Email Integration Setup
 
-The Email add-on follows the same pattern.
+**Step 1: Configure `workspace/config.yml`**
 
-**Step 1: Create the trigger**
-
+```yaml
+email:
+  imap_host: "imap.gmail.com"
+  imap_port: 993
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  username: "atlas@example.com"
+  password_file: "/atlas/workspace/secrets/email-password"
+  folder: "INBOX"
+  whitelist: []   # empty = accept all; or ["alice@example.com", "example.org"]
+  mark_read: true
 ```
-trigger_create(
-  name="email-handler",
-  type="webhook",
-  session_mode="persistent",
-  channel="email",
-  prompt="New email:\n\n{{payload}}"
-)
+
+**Step 2: Store password**
+
+```bash
+echo "your-app-password" > /atlas/workspace/secrets/email-password
+chmod 600 /atlas/workspace/secrets/email-password
 ```
 
-**Step 2: Add polling to crontab**
+For Gmail: use an App Password, not your main password.
+
+**Step 3: Create the trigger**
+
+```bash
+trigger create \
+  --name=email-handler \
+  --type=webhook \
+  --session-mode=persistent \
+  --channel=email \
+  --description="Email conversations (IMAP)"
+```
+
+Then write `workspace/triggers/email-handler/prompt.md`:
+```
+New email received:
+
+{{payload}}
+
+The payload contains inbox_message_id and thread_id.
+Reply directly via CLI: email reply <thread_id> "message"
+Escalate complex tasks via task_create.
+```
+
+**Step 4: Add polling to crontab**
 
 Edit `/atlas/workspace/crontab` and add **above** the marker:
 
@@ -177,41 +252,37 @@ Never edit below the marker — those entries are managed by `sync-crontab.ts`. 
 Trigger sessions act as first-line filters:
 
 1. **Simple events**: Handle directly with CLI tools (`signal send`, `email reply`) or MCP actions
-2. **Complex events**: Escalate to the main session via `inbox_write`
+2. **Complex events**: Escalate to the main session via `task_create`
 
 ```
 # Single task escalation
-inbox_write(sender="trigger:github-issues", content="Review critical issue #42")
+task_create(content="Review critical issue #42 from GitHub")
 
 # Multi-task escalation
-inbox_write(sender="trigger:deploy", content="Update CHANGELOG for v2.3.0")
-inbox_write(sender="trigger:deploy", content="Run post-deploy smoke tests")
+task_create(content="Update CHANGELOG for v2.3.0")
+task_create(content="Run post-deploy smoke tests")
 ```
 
-The main session wakes automatically when new inbox messages arrive.
-
-## Prompt Fallback
-
-If a trigger's `prompt` field is empty, the system looks for:
-```
-workspace/triggers/cron/<trigger-name>/event-prompt.md
-```
+The main session wakes automatically when new tasks arrive.
 
 ## Managing Triggers
 
-```
+```bash
 # List all triggers
-trigger_list()
+trigger list
 
 # List only cron triggers
-trigger_list(type="cron")
+trigger list --type=cron
 
 # Disable a trigger
-trigger_update(name="github-issues", enabled=false)
+trigger disable --name=github-issues
+
+# Enable a trigger
+trigger enable --name=github-issues
 
 # Change schedule
-trigger_update(name="daily-report", schedule="0 8 * * *")
+trigger update --name=daily-report --schedule="0 8 * * *"
 
 # Delete a trigger
-trigger_delete(name="old-hook")
+trigger delete --name=old-hook
 ```

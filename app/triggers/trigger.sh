@@ -68,7 +68,7 @@ SESSION_KEY="${3:-_default}"
 
 # Fallback: load prompt from workspace file
 if [ -z "$PROMPT" ]; then
-  PROMPT_FILE="$WORKSPACE/triggers/cron/${TRIGGER_NAME}/event-prompt.md"
+  PROMPT_FILE="$WORKSPACE/triggers/${TRIGGER_NAME}/prompt.md"
   if [ -f "$PROMPT_FILE" ]; then
     PROMPT=$(cat "$PROMPT_FILE")
   else

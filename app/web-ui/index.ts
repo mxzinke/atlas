@@ -532,7 +532,6 @@ function triggerRow(t: any): string {
         ${t.enabled ? "Disable" : "Enable"}</button>
       <button class="btn btn-sm btn-outline" hx-post="/triggers/${t.id}/run" hx-target="#trigger-list" hx-swap="innerHTML">
         Run</button>
-      <a href="/triggers/${t.id}/edit" class="btn btn-sm btn-outline">Edit</a>
       <button class="btn btn-sm btn-outline" style="color:#f44336;border-color:#f44336"
         hx-delete="/triggers/${t.id}" hx-target="#trigger-list" hx-swap="innerHTML"
         hx-confirm="Delete trigger '${safe(t.name)}'?">Del</button>
@@ -549,13 +548,10 @@ app.get("/triggers", (c) => {
   const html = `
     <h1>Triggers</h1>
     ${flash ? `<div class="flash flash-ok">${safe(flash)}</div>` : ""}
-    <div class="flex mb-16">
-      <a href="/triggers/new" class="btn">+ New Trigger</a>
-    </div>
     <div class="card" id="trigger-list">
       ${
         triggers.length === 0
-          ? '<div class="text-muted">No triggers configured. Create one to get started.</div>'
+          ? '<div class="text-muted">No triggers configured. Use the AI skill to create one.</div>'
           : `<table>
           <tr><th>Type</th><th>Name</th><th>Schedule / URL</th><th>Status</th><th>Last Run</th><th></th></tr>
           ${triggers.map((t) => triggerRow(t)).join("")}
@@ -568,178 +564,11 @@ app.get("/triggers", (c) => {
         <strong>Cron:</strong> Runs on schedule via supercronic. Example: <code>0 * * * *</code> = every hour.<br>
         <strong>Webhook:</strong> POST to <code>/api/webhook/&lt;name&gt;</code> with optional <code>X-Webhook-Secret</code> header. Payload replaces <code>{{payload}}</code> in prompt.<br>
         <strong>Manual:</strong> Click "Run" to trigger immediately.<br>
-        All triggers write a message to the inbox and wake Claude.
+        Triggers are configured via the <strong>triggers</strong> AI skill — ask Claude to create or modify triggers.
       </div>
     </div>`;
 
   return c.html(layout("Triggers", html, "triggers"));
-});
-
-app.get("/triggers/new", (c) => {
-  const html = `
-    <h1>New Trigger</h1>
-    <div class="card">
-      <form method="POST" action="/triggers">
-        <div class="mb-8">
-          <label class="text-muted">Name (slug)</label>
-          <input type="text" name="name" placeholder="github-check" required pattern="[a-z0-9_-]+" title="Lowercase, dashes, underscores only">
-        </div>
-        <div class="mb-8">
-          <label class="text-muted">Type</label>
-          <select name="type" id="trigger-type" onchange="document.getElementById('cron-field').style.display=this.value==='cron'?'block':'none';document.getElementById('webhook-field').style.display=this.value==='webhook'?'block':'none'">
-            <option value="cron">Cron (scheduled)</option>
-            <option value="webhook">Webhook (HTTP endpoint)</option>
-            <option value="manual">Manual (run on demand)</option>
-          </select>
-        </div>
-        <div class="mb-8">
-          <label class="text-muted">Description</label>
-          <input type="text" name="description" placeholder="What does this trigger do?">
-        </div>
-        <div class="mb-8" id="cron-field">
-          <label class="text-muted">Cron Schedule</label>
-          <input type="text" name="schedule" placeholder="0 * * * *">
-          <div class="text-muted" style="font-size:11px;margin-top:4px">min hour dom month dow — Examples: <code>*/15 * * * *</code> (every 15min), <code>0 9 * * 1-5</code> (weekdays 9am)</div>
-        </div>
-        <div class="mb-8" id="webhook-field" style="display:none">
-          <label class="text-muted">Webhook Secret (optional)</label>
-          <div class="flex">
-            <input type="text" name="webhook_secret" id="ws-input" placeholder="Leave empty for no auth">
-            <button type="button" class="btn btn-sm btn-outline" onclick="document.getElementById('ws-input').value=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')">Generate</button>
-          </div>
-        </div>
-        <div class="mb-8">
-          <label class="text-muted">Channel</label>
-          <input type="text" name="channel" value="internal" placeholder="internal">
-        </div>
-        <div class="mb-8">
-          <label class="text-muted">Prompt Template</label>
-          <textarea name="prompt" rows="6" placeholder="What should Claude do when this trigger fires? Use {{payload}} for webhook data."></textarea>
-        </div>
-        <button type="submit">Create Trigger</button>
-      </form>
-    </div>`;
-
-  return c.html(layout("New Trigger", html, "triggers"));
-});
-
-app.post("/triggers", async (c) => {
-  const body = await c.req.parseBody();
-  const name = ((body.name as string) || "").trim();
-  const type = (body.type as string) || "manual";
-  const description = ((body.description as string) || "").trim();
-  const channel = ((body.channel as string) || "internal").trim();
-  const schedule = ((body.schedule as string) || "").trim() || null;
-  const webhook_secret = ((body.webhook_secret as string) || "").trim() || null;
-  const prompt = ((body.prompt as string) || "").trim();
-
-  if (!name || !/^[a-z0-9_-]+$/.test(name))
-    return c.redirect("/triggers/new?err=name");
-  if (schedule && !/^[\d\s*\/,-]+$/.test(schedule))
-    return c.redirect("/triggers/new?err=schedule");
-
-  try {
-    db.prepare(
-      `INSERT INTO triggers (name, type, description, channel, schedule, webhook_secret, prompt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(name, type, description, channel, schedule, webhook_secret, prompt);
-  } catch (err: any) {
-    return c.redirect(`/triggers?msg=Error: ${err.message}`);
-  }
-
-  if (type === "cron") syncCrontab();
-
-  return c.redirect(`/triggers?msg=Trigger '${name}' created`);
-});
-
-app.get("/triggers/:id/edit", (c) => {
-  const t = db
-    .prepare("SELECT * FROM triggers WHERE id = ?")
-    .get(c.req.param("id")) as any;
-  if (!t) return c.redirect("/triggers?msg=Trigger not found");
-
-  const html = `
-    <h1>Edit: ${safe(t.name)}</h1>
-    <div class="card">
-      <form method="POST" action="/triggers/${t.id}/update">
-        <div class="mb-8">
-          <label class="text-muted">Name</label>
-          <input type="text" value="${safe(t.name)}" disabled>
-          <input type="hidden" name="name" value="${safe(t.name)}">
-        </div>
-        <div class="mb-8">
-          <label class="text-muted">Type: ${safe(t.type)}</label>
-        </div>
-        <div class="mb-8">
-          <label class="text-muted">Description</label>
-          <input type="text" name="description" value="${safe(t.description || "")}">
-        </div>
-        ${
-          t.type === "cron"
-            ? `<div class="mb-8">
-          <label class="text-muted">Cron Schedule</label>
-          <input type="text" name="schedule" value="${safe(t.schedule || "")}">
-        </div>`
-            : ""
-        }
-        ${
-          t.type === "webhook"
-            ? `<div class="mb-8">
-          <label class="text-muted">Webhook Secret</label>
-          <input type="text" name="webhook_secret" value="${safe(t.webhook_secret || "")}">
-          <div class="text-muted" style="font-size:11px;margin-top:4px">URL: <code>/api/webhook/${safe(t.name)}</code></div>
-        </div>`
-            : ""
-        }
-        <div class="mb-8">
-          <label class="text-muted">Channel</label>
-          <input type="text" name="channel" value="${safe(t.channel || "internal")}">
-        </div>
-        <div class="mb-8">
-          <label class="text-muted">Prompt Template</label>
-          <textarea name="prompt" rows="6">${safe(t.prompt || "")}</textarea>
-        </div>
-        <div class="flex">
-          <button type="submit">Save</button>
-          <a href="/triggers" class="btn btn-outline">Cancel</a>
-        </div>
-      </form>
-    </div>`;
-
-  return c.html(layout(`Edit ${t.name}`, html, "triggers"));
-});
-
-app.post("/triggers/:id/update", async (c) => {
-  const id = c.req.param("id");
-  const body = await c.req.parseBody();
-  const t = db.prepare("SELECT * FROM triggers WHERE id = ?").get(id) as any;
-  if (!t) return c.redirect("/triggers?msg=Trigger not found");
-
-  const updates: string[] = [];
-  const params: unknown[] = [];
-
-  for (const field of [
-    "description",
-    "channel",
-    "schedule",
-    "webhook_secret",
-    "prompt",
-  ]) {
-    if (body[field] !== undefined) {
-      updates.push(`${field} = ?`);
-      params.push(((body[field] as string) || "").trim() || null);
-    }
-  }
-
-  if (updates.length > 0) {
-    params.push(id);
-    db.prepare(`UPDATE triggers SET ${updates.join(", ")} WHERE id = ?`).run(
-      ...params,
-    );
-    if (t.type === "cron") syncCrontab();
-  }
-
-  return c.redirect(`/triggers?msg=Trigger '${t.name}' updated`);
 });
 
 app.post("/triggers/:id/toggle", (c) => {

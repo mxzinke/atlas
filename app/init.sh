@@ -78,15 +78,13 @@ for old_skill in "$WORKSPACE"/skills/*.md; do
   fi
 done
 
-# Copy default skills that don't exist yet
+# Always refresh system skills from defaults (single source of truth)
 for skill_dir in /atlas/app/defaults/skills/*/; do
   [ -d "$skill_dir" ] || continue
   SKILL_NAME=$(basename "$skill_dir")
   DEST="$WORKSPACE/skills/$SKILL_NAME"
-  if [ ! -d "$DEST" ]; then
-    cp -r "$skill_dir" "$DEST"
-    echo "  Created skill: $SKILL_NAME"
-  fi
+  cp -r "$skill_dir" "$DEST"
+  echo "  Refreshed skill: $SKILL_NAME"
 done
 
 # ── Phase 6: Initialize SQLite DB ──
