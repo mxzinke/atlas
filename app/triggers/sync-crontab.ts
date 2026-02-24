@@ -31,7 +31,7 @@ try {
 let cronLines: string[] = [];
 try {
   mkdirSync("/atlas/workspace/inbox", { recursive: true });
-  const db = new Database(DB_PATH, { readonly: true, create: false });
+  const db = new Database(DB_PATH, { readonly: true });
   const triggers = db.prepare(
     "SELECT name, schedule FROM triggers WHERE type = 'cron' AND enabled = 1 AND schedule IS NOT NULL"
   ).all() as { name: string; schedule: string }[];

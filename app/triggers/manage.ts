@@ -79,7 +79,7 @@ Commands:
 }
 
 const flags = parseFlags(argv.slice(1));
-const db = new Database(DB_PATH, { create: false });
+const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode=WAL");
 
 switch (command) {
