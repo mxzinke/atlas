@@ -13,7 +13,6 @@ function createTables(database: Database): void {
       channel TEXT NOT NULL,
       sender TEXT,
       content TEXT NOT NULL,
-      reply_to TEXT,
       status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
       response_summary TEXT,
       created_at TEXT DEFAULT (datetime('now')),
@@ -77,13 +76,13 @@ function migrateSchema(database: Database): void {
           channel TEXT NOT NULL,
           sender TEXT,
           content TEXT NOT NULL,
-          reply_to TEXT,
           status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
           response_summary TEXT,
           created_at TEXT DEFAULT (datetime('now')),
           processed_at TEXT
         );
-        INSERT INTO messages SELECT * FROM _messages_old;
+        INSERT INTO messages (id, channel, sender, content, status, response_summary, created_at, processed_at)
+          SELECT id, channel, sender, content, status, response_summary, created_at, processed_at FROM _messages_old;
         DROP TABLE _messages_old;
       `);
       database.exec("COMMIT");
@@ -109,13 +108,13 @@ function migrateSchema(database: Database): void {
           channel TEXT NOT NULL,
           sender TEXT,
           content TEXT NOT NULL,
-          reply_to TEXT,
           status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','done','cancelled')),
           response_summary TEXT,
           created_at TEXT DEFAULT (datetime('now')),
           processed_at TEXT
         );
-        INSERT INTO messages SELECT * FROM _messages_status_mig;
+        INSERT INTO messages (id, channel, sender, content, status, response_summary, created_at, processed_at)
+          SELECT id, channel, sender, content, status, response_summary, created_at, processed_at FROM _messages_status_mig;
         DROP TABLE _messages_status_mig;
       `);
       database.exec("COMMIT");
@@ -195,6 +194,15 @@ function migrateSchema(database: Database): void {
   ).get();
   if (signalInfo) {
     database.exec(`DROP TABLE signal_sessions`);
+  }
+
+  // Remove reply_to column if present (no longer needed — use env vars + content instead)
+  const latestMsgInfo = database.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'"
+  ).get() as { sql: string } | undefined;
+
+  if (latestMsgInfo?.sql?.includes("reply_to")) {
+    database.exec(`ALTER TABLE messages DROP COLUMN reply_to`);
   }
 }
 

@@ -101,20 +101,16 @@ if (IS_TRIGGER) {
         .describe(
           "Task brief with full context (self-contained — worker has no access to this conversation)",
         ),
-      reply_to: z
-        .string()
-        .optional()
-        .describe("Reference to original message or contact"),
     },
-    async ({ content, reply_to }) => {
+    async ({ content }) => {
       const db = getDb();
       const sender = `trigger:${ATLAS_TRIGGER}`;
 
       const message = db
         .prepare(
-          "INSERT INTO messages (channel, sender, content, reply_to) VALUES ('task', ?, ?, ?) RETURNING *",
+          "INSERT INTO messages (channel, sender, content) VALUES ('task', ?, ?) RETURNING *",
         )
-        .get(sender, content, reply_to ?? null) as any;
+        .get(sender, content) as any;
       const taskId = message.id;
 
       // Auto-register for re-awakening
