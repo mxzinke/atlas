@@ -105,22 +105,57 @@ Check the inbox for any unread messages and summarize activity from the past 24 
 Escalate anything urgent to the main session via task_create.
 ```
 
-## Signal Integration Setup
+## Adding Custom Background Services
 
-**Prerequisites:** `signal-cli` installed and registered (add install to `workspace/user-extensions.sh`):
-```bash
-apt-get install -y signal-cli
+Some integrations need a persistent background process instead of a cron job — for example, a messaging listener that reacts instantly rather than polling every minute.
+
+Atlas supports this via `workspace/supervisor.d/`. Any `.conf` file placed there is picked up by supervisord. Services can be added or removed without rebuilding the container.
+
+**Add a service** — create `workspace/supervisor.d/myservice.conf`:
+```ini
+[program:myservice]
+command=/path/to/command --args
+autostart=true
+autorestart=true
+stdout_logfile=/atlas/logs/myservice.log
+stderr_logfile=/atlas/logs/myservice-error.log
 ```
 
-One-time interactive registration (run manually inside the container):
+Then reload:
+```bash
+supervisorctl reread && supervisorctl update
+```
+
+Manage it normally after that:
+```bash
+supervisorctl start myservice
+supervisorctl stop myservice
+supervisorctl status myservice
+```
+
+---
+
+## Signal Integration Setup
+
+Signal uses `signal-cli` in **daemon mode** — a persistent process that pushes messages in real-time via a UNIX socket. This is lower-latency and more reliable than cron polling.
+
+**Install signal-cli** (add to `workspace/user-extensions.sh` so it survives rebuilds):
+```bash
+SIGNAL_VERSION="0.13.10"  # check https://github.com/AsamK/signal-cli/releases for latest
+ARCH=$(dpkg --print-architecture)
+curl -fsSL "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_VERSION}/signal-cli-${SIGNAL_VERSION}-Linux-${ARCH}.tar.gz" \
+  | tar -xz -C /usr/local
+ln -sf /usr/local/signal-cli-${SIGNAL_VERSION}/bin/signal-cli /usr/local/bin/signal-cli
+```
+
+**One-time registration** (run once manually inside the container, not in user-extensions.sh):
 ```bash
 signal-cli -a +491701234567 register
-# If Signal requires a captcha, the above will fail with a captcha error.
-# In that case:
-#   1. Let human visit https://signalcaptchas.org/registration/generate and complete the captcha
-#   2. Copy the captcha url (format: "signalcaptcha://<signal-recaptcha-token>")
-#   3. Re-run: signal-cli -a +491701234567 register --captcha <signal-recaptcha-token>
-signal-cli -a +491701234567 verify 123-456 # Code from SMS
+# If a captcha is required:
+#   1. Visit https://signalcaptchas.org/registration/generate and complete it
+#   2. Copy the URL (format: signalcaptcha://<token>)
+#   3. Re-run: signal-cli -a +491701234567 register --captcha <token>
+signal-cli -a +491701234567 verify 123-456  # code from SMS
 ```
 
 **Step 1: Configure `workspace/config.yml`**
@@ -142,7 +177,7 @@ trigger create \
   --description="Signal messenger conversations"
 ```
 
-Then write `workspace/triggers/signal-chat/prompt.md`:
+Write `workspace/triggers/signal-chat/prompt.md`:
 ```
 New Signal message received:
 
@@ -153,15 +188,31 @@ Reply directly via CLI: signal send <number> "message"
 Escalate complex tasks via task_create.
 ```
 
-**Step 3: Add polling to crontab**
+**Step 3: Add supervisor services**
 
-Edit `/atlas/workspace/crontab` and add this line **above** the `# === AUTO-GENERATED TRIGGERS` marker:
+Create `workspace/supervisor.d/signal.conf` (replace number with your own):
+```ini
+[program:signal-daemon]
+command=signal-cli -a +491701234567 daemon --socket /tmp/signal.sock
+autostart=true
+autorestart=true
+stdout_logfile=/atlas/logs/signal-daemon.log
+stderr_logfile=/atlas/logs/signal-daemon-error.log
 
+[program:signal-listen]
+command=python3 /atlas/app/integrations/signal/signal-daemon-listener.py
+autostart=true
+autorestart=true
+stdout_logfile=/atlas/logs/signal-listen.log
+stderr_logfile=/atlas/logs/signal-listen-error.log
 ```
-* * * * *  signal poll --once 2>&1 >> /atlas/logs/signal.log
+
+Activate:
+```bash
+supervisorctl reread && supervisorctl update
 ```
 
-The poller checks for new Signal messages every minute. When a message arrives, it fires the trigger with the sender's number as the session key — so each contact gets their own persistent session.
+The listener connects to the socket and calls `signal incoming` for each message, which stores it in the inbox and fires the trigger. Each sender gets their own persistent session automatically.
 
 **CLI tools available in trigger sessions:**
 
@@ -242,7 +293,7 @@ email thread <thread_id>
 
 The crontab at `/atlas/workspace/crontab` has two sections:
 
-- **Static** (above `# === AUTO-GENERATED TRIGGERS`): Manual entries like Signal/Email pollers
+- **Static** (above `# === AUTO-GENERATED TRIGGERS`): Manual cron entries (e.g. email polling)
 - **Dynamic** (below the marker): Auto-generated from enabled cron triggers
 
 Never edit below the marker — those entries are managed by `sync-crontab.ts`. Poller entries and custom cron jobs go above it.

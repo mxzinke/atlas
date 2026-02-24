@@ -31,6 +31,7 @@ mkdir -p "$WORKSPACE/memory/projects" \
          "$WORKSPACE/triggers" \
          "$WORKSPACE/secrets" \
          "$WORKSPACE/bin" \
+         "$WORKSPACE/supervisor.d" \
          "$WORKSPACE/.qmd-cache" \
          /atlas/logs
 
