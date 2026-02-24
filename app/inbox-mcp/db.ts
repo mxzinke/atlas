@@ -107,8 +107,8 @@ function migrateSchema(database: Database): void {
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'"
   ).get() as { sql: string } | undefined;
 
-  // Migrate: add 'cancelled' to messages status constraint
-  if (msgInfo?.sql && !msgInfo.sql.includes("'cancelled'")) {
+  // Migrate: add 'cancelled' to messages status constraint (only if status column still exists)
+  if (msgInfo?.sql && msgInfo.sql.includes("status") && !msgInfo.sql.includes("'cancelled'")) {
     database.exec("BEGIN");
     try {
       database.exec(`
