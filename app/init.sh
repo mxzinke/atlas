@@ -113,6 +113,20 @@ fi
 sqlite3 "$DB" "INSERT OR IGNORE INTO triggers (name, type, description, channel, prompt, session_mode) VALUES (
   'web-chat', 'manual', 'Web UI chat message handler', 'web', '', 'persistent');" || echo "  ⚠ web-chat trigger insert failed (non-fatal)"
 
+# Create web-chat spawn prompt (used when session is not running and must be started/resumed)
+# The {{payload}} placeholder is substituted with the JSON message by trigger.sh
+mkdir -p "$WORKSPACE/triggers/web-chat"
+if [ ! -f "$WORKSPACE/triggers/web-chat/prompt.md" ]; then
+  cat > "$WORKSPACE/triggers/web-chat/prompt.md" << 'WCPROMPT'
+New web UI message:
+
+{{payload}}
+
+Reply to the user's "message" field conversationally.
+WCPROMPT
+  echo "  Created web-chat trigger prompt"
+fi
+
 # ── Phase 7: User Extensions ──
 echo "[$(date)] Phase 7: User extensions"
 if [ -f "$WORKSPACE/user-extensions.sh" ]; then
