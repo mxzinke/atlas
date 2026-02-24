@@ -6,6 +6,9 @@
     },
     "memory": {
       "url": "http://localhost:8181/sse"
+    },
+    "playwright": {
+      "url": "http://localhost:8931/sse"
     }
   }
 }

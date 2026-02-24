@@ -165,6 +165,7 @@ echo "[$(date)] Phase 10: Starting services"
 supervisorctl start inbox-mcp || true
 sleep 1
 supervisorctl start qmd || true
+supervisorctl start playwright-mcp || true
 supervisorctl start web-ui || true
 supervisorctl start watcher || true
 supervisorctl start supercronic || true
