@@ -84,6 +84,7 @@ for skill_dir in /atlas/app/defaults/skills/*/; do
   [ -d "$skill_dir" ] || continue
   SKILL_NAME=$(basename "$skill_dir")
   DEST="$WORKSPACE/skills/$SKILL_NAME"
+  rm -rf "$DEST"
   cp -r "$skill_dir" "$DEST"
   echo "  Refreshed skill: $SKILL_NAME"
 done
