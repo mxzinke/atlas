@@ -10,6 +10,7 @@ import {
   statSync,
 } from "fs";
 import { join, resolve } from "path";
+import { homedir } from "os";
 import { getDb } from "../inbox-mcp/db";
 
 // --- Config ---
@@ -171,10 +172,190 @@ pre{background:#1a1b2e;border:1px solid #3a3b55;border-radius:4px;padding:12px;o
 .typing-dots span:nth-child(2){animation-delay:.2s}
 .typing-dots span:nth-child(3){animation-delay:.4s}
 @keyframes dotPulse{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+.chat-tool{align-self:flex-start;max-width:85%;margin-bottom:4px}
+.chat-tool details{background:#1e1f35;border:1px solid #3a3b55;border-radius:8px;overflow:hidden}
+.chat-tool summary{padding:8px 12px;cursor:pointer;color:#999;font-size:12px;user-select:none}
+.chat-tool summary:hover{color:#7c6ef0}
+.tool-call-item{padding:8px 12px;border-top:1px solid #3a3b55}
+.tool-call-name{font-size:12px;color:#7c6ef0;font-weight:600;margin-bottom:4px}
+.tool-call-input,.tool-call-result{margin:4px 0;padding:6px 8px;font-size:11px;max-height:200px;overflow-y:auto}
+.tool-call-result{border-left:2px solid #4caf50}
+.chat-thinking{align-self:flex-start;max-width:85%;margin-bottom:4px}
+.chat-thinking details{background:#1a1b2e;border:1px solid #2a2b45;border-radius:8px;overflow:hidden;opacity:0.6}
+.chat-thinking summary{padding:6px 12px;cursor:pointer;color:#666;font-size:11px;font-style:italic}
+.chat-thinking pre{margin:0;padding:8px 12px;font-size:11px;max-height:200px;overflow-y:auto;color:#888}
 </style></head><body>
 <nav><div class="logo">ATLAS</div>${links}</nav>
 <main${mainStyle ? ` style="${mainStyle}"` : ""}>${content}</main>
 </body></html>`;
+}
+
+// --- Session JSONL helpers ---
+
+interface ParsedMessage {
+  type: "user-text" | "user-tool-result" | "assistant-text" | "assistant-tool-use" | "assistant-thinking";
+  content: string;
+  timestamp?: string;
+  toolName?: string;
+  toolInput?: string;
+}
+
+function findSessionFile(sessionId: string): string | null {
+  const home = homedir();
+  const projectsDir = join(home, ".claude", "projects");
+  if (!existsSync(projectsDir)) return null;
+
+  try {
+    for (const dir of readdirSync(projectsDir)) {
+      const candidate = join(projectsDir, dir, `${sessionId}.jsonl`);
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {}
+  return null;
+}
+
+function parseSessionMessages(filePath: string): ParsedMessage[] {
+  const messages: ParsedMessage[] = [];
+  let content: string;
+  try {
+    content = readFileSync(filePath, "utf-8");
+  } catch {
+    return messages;
+  }
+
+  for (const line of content.split("\n")) {
+    if (!line.trim()) continue;
+    let obj: any;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    const ts = obj.timestamp;
+
+    if (obj.type === "user") {
+      if (typeof obj.message === "string") {
+        // Try to extract clean user text from inject template payload JSON
+        let text = obj.message;
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed.message) text = parsed.message;
+        } catch {}
+        // Skip if this looks like a system/inject template (starts with "New event for trigger")
+        if (/^New event for trigger /.test(text)) {
+          // Try to extract the actual payload JSON from the inject template
+          const payloadMatch = text.match(/\n\n(\{[\s\S]*\})\n\n/);
+          if (payloadMatch) {
+            try {
+              const payload = JSON.parse(payloadMatch[1]);
+              if (payload.message) text = payload.message;
+            } catch {}
+          }
+        }
+        messages.push({ type: "user-text", content: text, timestamp: ts });
+      } else if (Array.isArray(obj.message)) {
+        // Could contain tool_result blocks
+        for (const block of obj.message) {
+          if (block.type === "tool_result") {
+            const resultContent = Array.isArray(block.content)
+              ? block.content.map((c: any) => c.text || "").join("\n")
+              : typeof block.content === "string"
+                ? block.content
+                : JSON.stringify(block.content);
+            messages.push({
+              type: "user-tool-result",
+              content: resultContent,
+              timestamp: ts,
+              toolName: block.tool_use_id,
+            });
+          }
+        }
+      }
+    } else if (obj.type === "assistant") {
+      if (!Array.isArray(obj.message)) continue;
+      for (const block of obj.message) {
+        if (block.type === "text" && block.text) {
+          messages.push({ type: "assistant-text", content: block.text, timestamp: ts });
+        } else if (block.type === "tool_use") {
+          const inputStr = typeof block.input === "string"
+            ? block.input
+            : JSON.stringify(block.input, null, 2);
+          messages.push({
+            type: "assistant-tool-use",
+            content: block.name || "tool",
+            timestamp: ts,
+            toolName: block.name,
+            toolInput: inputStr.length > 2000 ? inputStr.slice(0, 2000) + "..." : inputStr,
+          });
+        } else if (block.type === "thinking" && block.thinking) {
+          messages.push({
+            type: "assistant-thinking",
+            content: block.thinking.length > 1000
+              ? block.thinking.slice(0, 1000) + "..."
+              : block.thinking,
+            timestamp: ts,
+          });
+        }
+      }
+    }
+    // Skip system, progress, file-history-snapshot, etc.
+  }
+
+  return messages;
+}
+
+function renderConversation(messages: ParsedMessage[]): string {
+  let html = "";
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+
+    if (msg.type === "user-text") {
+      html += `<div class="chat-bubble user">${safe(msg.content)}</div>`;
+      if (msg.timestamp) html += `<div class="chat-time user">${timeAgo(msg.timestamp)}</div>`;
+      i++;
+    } else if (msg.type === "assistant-text") {
+      html += `<div class="chat-bubble bot">${safe(msg.content)}</div>`;
+      if (msg.timestamp) html += `<div class="chat-time">${timeAgo(msg.timestamp)}</div>`;
+      i++;
+    } else if (msg.type === "assistant-tool-use") {
+      // Aggregate consecutive tool calls and their results
+      const toolGroup: { name: string; input: string; result?: string }[] = [];
+      while (i < messages.length && (messages[i].type === "assistant-tool-use" || messages[i].type === "user-tool-result")) {
+        if (messages[i].type === "assistant-tool-use") {
+          toolGroup.push({ name: messages[i].toolName || "tool", input: messages[i].toolInput || "" });
+        } else if (messages[i].type === "user-tool-result" && toolGroup.length > 0) {
+          // Attach result to the most recent tool call without a result
+          const last = toolGroup[toolGroup.length - 1];
+          if (!last.result) {
+            last.result = messages[i].content;
+          }
+        }
+        i++;
+      }
+      const summary = toolGroup.length === 1
+        ? `${toolGroup[0].name}`
+        : `${toolGroup.length} tool calls: ${toolGroup.map(t => t.name).join(", ")}`;
+      html += `<div class="chat-tool"><details><summary>${safe(summary)}</summary>`;
+      for (const t of toolGroup) {
+        html += `<div class="tool-call-item"><div class="tool-call-name">${safe(t.name)}</div>`;
+        html += `<pre class="tool-call-input">${safe(t.input.length > 500 ? t.input.slice(0, 500) + "..." : t.input)}</pre>`;
+        if (t.result) {
+          html += `<pre class="tool-call-result">${safe(t.result.length > 500 ? t.result.slice(0, 500) + "..." : t.result)}</pre>`;
+        }
+        html += `</div>`;
+      }
+      html += `</details></div>`;
+    } else if (msg.type === "assistant-thinking") {
+      html += `<div class="chat-thinking"><details><summary>thinking</summary><pre>${safe(msg.content)}</pre></details></div>`;
+      i++;
+    } else {
+      // user-tool-result without preceding tool call — skip
+      i++;
+    }
+  }
+  return html;
 }
 
 // --- App ---
@@ -869,7 +1050,7 @@ app.get("/journal/content", (c) => {
 app.get("/chat", (c) => {
   const html = `
     <div class="chat-container">
-      <div class="chat-messages" id="chat-messages" hx-get="/chat/messages" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
+      <div class="chat-messages" id="chat-messages" hx-get="/chat/conversation" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
       <form class="chat-input" hx-post="/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-on::after-request="this.reset()">
         <input type="text" name="content" placeholder="Type a message..." autocomplete="off" required>
         <button type="submit">Send</button>
@@ -893,37 +1074,41 @@ app.get("/chat", (c) => {
   return c.html(layout("Chat", html, "chat", "padding:0;max-width:none"));
 });
 
-app.get("/chat/messages", (c) => {
-  const msgs = db
-    .prepare(
-      "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50",
-    )
-    .all() as any[];
-  return c.html(msgs.map((m) => chatBubble(m)).join(""));
-});
+app.get("/chat/conversation", (c) => {
+  // Look up the web-chat trigger session
+  const session = db
+    .prepare("SELECT session_id FROM trigger_sessions WHERE trigger_name='web-chat' AND session_key='_default' LIMIT 1")
+    .get() as any;
 
-function chatBubble(m: any): string {
-  const isWaiting =
-    (m.status === "pending" || m.status === "processing") &&
-    !m.response_summary;
-  const ts = timeAgo(m.created_at);
-  let html = "";
-
-  // User message (right-aligned)
-  html += `<div class="chat-bubble user">${safe(m.content)}</div>`;
-  html += `<div class="chat-time user">${ts}</div>`;
-
-  // Bot response (left-aligned) or thinking dots
-  if (m.response_summary) {
-    html += `<div class="chat-bubble bot">${safe(m.response_summary)}</div>`;
-    html += `<div class="chat-time">${m.processed_at ? timeAgo(m.processed_at) : ts}</div>`;
-  } else if (isWaiting) {
-    html += `<div class="typing-dots"><span></span><span></span><span></span></div>`;
-    html += `<div class="chat-time">&nbsp;</div>`;
+  if (!session) {
+    return c.html('<div class="chat-bubble bot" style="opacity:0.5">No active chat session. Send a message to start.</div>');
   }
 
-  return html;
-}
+  const filePath = findSessionFile(session.session_id);
+  if (!filePath) {
+    return c.html('<div class="chat-bubble bot" style="opacity:0.5">Session file not found. Send a message to start a new session.</div>');
+  }
+
+  const messages = parseSessionMessages(filePath);
+  if (messages.length === 0) {
+    return c.html('<div class="chat-bubble bot" style="opacity:0.5">Session is starting...</div>');
+  }
+
+  const html = renderConversation(messages);
+
+  // Check if session is still running (has active IPC socket)
+  const socket = `/tmp/claudec-${session.session_id}.sock`;
+  const isRunning = existsSync(socket);
+  const lastMsg = messages[messages.length - 1];
+  const isAssistantLast = lastMsg.type.startsWith("assistant-");
+
+  // Show typing indicator if session is running and last message isn't assistant text
+  if (isRunning && !isAssistantLast) {
+    return c.html(html + '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>');
+  }
+
+  return c.html(html);
+});
 
 app.post("/chat", async (c) => {
   const body = await c.req.parseBody();
@@ -957,13 +1142,29 @@ app.post("/chat", async (c) => {
     },
   );
 
-  // Return updated message list
-  const msgs = db
-    .prepare(
-      "SELECT * FROM messages WHERE channel='web' ORDER BY created_at ASC LIMIT 50",
-    )
-    .all() as any[];
-  return c.html(msgs.map((m) => chatBubble(m)).join(""));
+  // Return conversation from JSONL (or just the user message if session hasn't started yet)
+  const session = db
+    .prepare("SELECT session_id FROM trigger_sessions WHERE trigger_name='web-chat' AND session_key='_default' LIMIT 1")
+    .get() as any;
+
+  if (session) {
+    const filePath = findSessionFile(session.session_id);
+    if (filePath) {
+      const messages = parseSessionMessages(filePath);
+      // Append the new user message that hasn't been injected yet
+      messages.push({ type: "user-text", content });
+      return c.html(
+        renderConversation(messages) +
+        '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>'
+      );
+    }
+  }
+
+  // No session yet — show just the sent message with typing indicator
+  return c.html(
+    `<div class="chat-bubble user">${safe(content)}</div><div class="chat-time user">just now</div>` +
+    '<div class="typing-dots"><span></span><span></span><span></span></div><div class="chat-time">&nbsp;</div>'
+  );
 });
 
 // ============ TASKS ============
