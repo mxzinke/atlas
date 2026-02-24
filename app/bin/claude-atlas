@@ -68,14 +68,6 @@ $(cat "$WORKSPACE/SOUL.md")"
 $(cat "$WORKSPACE/IDENTITY.md")"
     fi
 
-    if [ -f "$APP_DIR/prompts/trigger-base.md" ]; then
-        SYSTEM_PROMPT="$SYSTEM_PROMPT
-
----
-
-$(cat "$APP_DIR/prompts/trigger-base.md")"
-    fi
-
     CHANNEL="${ATLAS_TRIGGER_CHANNEL:-internal}"
     if [ -f "$APP_DIR/prompts/trigger-channel-${CHANNEL}.md" ]; then
         SYSTEM_PROMPT="$SYSTEM_PROMPT

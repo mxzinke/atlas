@@ -351,8 +351,8 @@ def write_to_atlas_inbox(sender, content, thread_id):
     atlas_db = sqlite3.connect(ATLAS_DB_PATH)
     atlas_db.execute("PRAGMA busy_timeout=5000")
     cursor = atlas_db.execute(
-        "INSERT INTO messages (channel, sender, content, reply_to) VALUES (?, ?, ?, ?)",
-        ("email", sender, content, thread_id),
+        "INSERT INTO messages (channel, sender, content) VALUES (?, ?, ?)",
+        ("email", sender, content),
     )
     msg_id = cursor.lastrowid
     atlas_db.commit()

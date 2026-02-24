@@ -41,15 +41,15 @@ fi
 # Check for active (processing) and pending tasks in a single query
 if [ -f "$DB" ]; then
   COUNTS=$(sqlite3 "$DB" "SELECT
-    (SELECT count(*) FROM messages WHERE status='processing'),
-    (SELECT count(*) FROM messages WHERE status='pending');" 2>/dev/null || echo "0|0")
+    (SELECT count(*) FROM tasks WHERE status='processing'),
+    (SELECT count(*) FROM tasks WHERE status='pending');" 2>/dev/null || echo "0|0")
 
   ACTIVE=$(echo "$COUNTS" | cut -d'|' -f1)
   PENDING=$(echo "$COUNTS" | cut -d'|' -f2)
 
   if [ "$ACTIVE" -gt 0 ]; then
     ACTIVE_TASK=$(sqlite3 -json "$DB" \
-      "SELECT id, sender, content FROM messages WHERE status='processing' ORDER BY created_at ASC LIMIT 1;" \
+      "SELECT id, trigger_name, content FROM tasks WHERE status='processing' ORDER BY created_at ASC LIMIT 1;" \
       2>/dev/null || echo "[]")
 
     if [ -n "$ACTIVE_TASK" ] && [ "$ACTIVE_TASK" != "[]" ]; then

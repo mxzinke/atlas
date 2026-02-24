@@ -175,8 +175,8 @@ def cmd_incoming(config, sender, message, name="", timestamp=""):
     atlas_db = sqlite3.connect(ATLAS_DB_PATH)
     atlas_db.execute("PRAGMA busy_timeout=5000")
     cursor = atlas_db.execute(
-        "INSERT INTO messages (channel, sender, content, reply_to) VALUES (?, ?, ?, ?)",
-        ("signal", sender, message, sender),
+        "INSERT INTO messages (channel, sender, content) VALUES (?, ?, ?)",
+        ("signal", sender, message),
     )
     inbox_msg_id = cursor.lastrowid
     atlas_db.commit()

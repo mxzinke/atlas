@@ -110,8 +110,8 @@ trigger_create:
 
     {{payload}}
 
-    The payload contains inbox_message_id and sender. Use inbox_mark to claim it,
-    then reply via CLI: signal send. Escalate complex tasks via inbox_write.
+    The payload contains inbox_message_id and sender. Reply via CLI: signal send.
+    Escalate complex tasks via task_create.
 ```
 
 **3. Start polling** (add to supervisord or crontab):
@@ -205,8 +205,8 @@ trigger_create:
 
     {{payload}}
 
-    The payload contains inbox_message_id and thread_id. Use inbox_mark to claim it,
-    then reply via CLI: email reply. Escalate complex tasks via inbox_write.
+    The payload contains inbox_message_id and thread_id. Reply via CLI: email reply.
+    Escalate complex tasks via task_create.
 ```
 
 **4. Start polling**:
@@ -292,9 +292,7 @@ Trigger sessions reply directly via CLI tools — no intermediate delivery layer
   - Sends via signal-cli, tracks in signal.db
 - **Email**: `email reply "<thread_id>" "<body>"`
   - Sends via SMTP with proper threading headers, tracks in email.db
-- **Web/Internal**: `inbox_mark` with status=`done` and response_summary
-
-After replying, trigger sessions mark the inbox message as done via `inbox_mark`.
+- **Web/Internal**: handled within the trigger session, no CLI reply needed
 
 ## Quick Reference
 

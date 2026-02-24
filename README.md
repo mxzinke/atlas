@@ -181,10 +181,9 @@ pip install some-package
 Claude has access to these tools via the inbox-mcp server:
 
 **Inbox:**
-- `inbox_list` — List messages by status/channel
-- `inbox_mark` — Update message status
+- `inbox_list` — List inbox messages by channel
 - `inbox_write` — Create new message (triggers wake)
-- `inbox_stats` — Inbox statistics
+- `inbox_stats` — Inbox and task statistics
 
 **Channel CLI Tools** (external communication):
 - `signal send|contacts|history` — Send Signal messages, list contacts, view history

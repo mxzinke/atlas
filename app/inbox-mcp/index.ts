@@ -104,14 +104,13 @@ if (IS_TRIGGER) {
     },
     async ({ content }) => {
       const db = getDb();
-      const sender = `trigger:${ATLAS_TRIGGER}`;
 
-      const message = db
+      const task = db
         .prepare(
-          "INSERT INTO messages (channel, sender, content) VALUES ('task', ?, ?) RETURNING *",
+          "INSERT INTO tasks (trigger_name, content) VALUES (?, ?) RETURNING *",
         )
-        .get(sender, content) as any;
-      const taskId = message.id;
+        .get(ATLAS_TRIGGER, content) as any;
+      const taskId = task.id;
 
       // Auto-register for re-awakening
       db.prepare(
@@ -122,7 +121,7 @@ if (IS_TRIGGER) {
       mkdirSync("/atlas/workspace/inbox", { recursive: true });
       touchFile("/atlas/workspace/inbox/.wake");
 
-      return ok(message);
+      return ok(task);
     },
   );
 
@@ -135,11 +134,11 @@ if (IS_TRIGGER) {
     },
     async ({ task_id }) => {
       const db = getDb();
-      const message = db
-        .prepare("SELECT * FROM messages WHERE id = ?")
+      const task = db
+        .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(task_id);
-      if (!message) return err(`Task ${task_id} not found`);
-      return ok(message);
+      if (!task) return err(`Task ${task_id} not found`);
+      return ok(task);
     },
   );
 
@@ -153,19 +152,19 @@ if (IS_TRIGGER) {
     },
     async ({ task_id, content }) => {
       const db = getDb();
-      const msg = db
-        .prepare("SELECT status FROM messages WHERE id = ?")
+      const task = db
+        .prepare("SELECT status FROM tasks WHERE id = ?")
         .get(task_id) as { status: string } | undefined;
-      if (!msg) return err(`Task ${task_id} not found`);
-      if (msg.status !== "pending")
+      if (!task) return err(`Task ${task_id} not found`);
+      if (task.status !== "pending")
         return err(
-          `Task ${task_id} is '${msg.status}' — can only update pending tasks`,
+          `Task ${task_id} is '${task.status}' — can only update pending tasks`,
         );
-      db.prepare("UPDATE messages SET content = ? WHERE id = ?").run(
+      db.prepare("UPDATE tasks SET content = ? WHERE id = ?").run(
         content,
         task_id,
       );
-      return ok(db.prepare("SELECT * FROM messages WHERE id = ?").get(task_id));
+      return ok(db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id));
     },
   );
 
@@ -179,21 +178,22 @@ if (IS_TRIGGER) {
     },
     async ({ task_id, reason }) => {
       const db = getDb();
-      const msg = db
-        .prepare("SELECT status FROM messages WHERE id = ?")
+      const task = db
+        .prepare("SELECT status FROM tasks WHERE id = ?")
         .get(task_id) as { status: string } | undefined;
-      if (!msg) return err(`Task ${task_id} not found`);
-      if (msg.status !== "pending")
+      if (!task) return err(`Task ${task_id} not found`);
+      if (task.status !== "pending")
         return err(
-          `Task ${task_id} is '${msg.status}' — can only cancel pending tasks`,
+          `Task ${task_id} is '${task.status}' — can only cancel pending tasks`,
         );
       db.prepare(
-        "UPDATE messages SET status = 'cancelled', response_summary = ?, processed_at = datetime('now') WHERE id = ?",
+        "UPDATE tasks SET status = 'cancelled', response_summary = ?, processed_at = datetime('now') WHERE id = ?",
       ).run(reason ? `Cancelled: ${reason}` : "Cancelled", task_id);
       db.prepare("DELETE FROM task_awaits WHERE task_id = ?").run(task_id);
-      return ok(db.prepare("SELECT * FROM messages WHERE id = ?").get(task_id));
+      return ok(db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id));
     },
   );
+
 }
 
 // =============================================================================
@@ -211,7 +211,7 @@ if (!IS_TRIGGER) {
       // Check for stuck active task first
       const active = db
         .prepare(
-          "SELECT * FROM messages WHERE status = 'processing' ORDER BY created_at ASC LIMIT 1",
+          "SELECT * FROM tasks WHERE status = 'processing' ORDER BY created_at ASC LIMIT 1",
         )
         .get();
       if (active) {
@@ -225,8 +225,8 @@ if (!IS_TRIGGER) {
       // Atomically claim next pending in a single statement
       const next = db
         .prepare(
-          `UPDATE messages SET status = 'processing', processed_at = datetime('now')
-         WHERE id = (SELECT id FROM messages WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1)
+          `UPDATE tasks SET status = 'processing', processed_at = datetime('now')
+         WHERE id = (SELECT id FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1)
          RETURNING *`,
         )
         .get() as any;
@@ -254,24 +254,24 @@ if (!IS_TRIGGER) {
       const db = getDb();
       const result = db
         .prepare(
-          "UPDATE messages SET status = 'done', response_summary = ?, processed_at = datetime('now') WHERE id = ? AND status = 'processing'",
+          "UPDATE tasks SET status = 'done', response_summary = ?, processed_at = datetime('now') WHERE id = ? AND status = 'processing'",
         )
         .run(response_summary, task_id);
 
       if (result.changes === 0) {
-        const msg = db
-          .prepare("SELECT status FROM messages WHERE id = ?")
+        const task = db
+          .prepare("SELECT status FROM tasks WHERE id = ?")
           .get(task_id) as { status: string } | undefined;
-        if (!msg) return err(`Task ${task_id} not found`);
+        if (!task) return err(`Task ${task_id} not found`);
         return err(
-          `Task ${task_id} is '${msg.status}' — can only complete tasks in 'processing' status`,
+          `Task ${task_id} is '${task.status}' — can only complete tasks in 'processing' status`,
         );
       }
 
       // Wake the trigger session that created this task
       wakeTriggerIfAwaiting(task_id, response_summary);
 
-      return ok(db.prepare("SELECT * FROM messages WHERE id = ?").get(task_id));
+      return ok(db.prepare("SELECT * FROM tasks WHERE id = ?").get(task_id));
     },
   );
 
@@ -292,7 +292,7 @@ if (!IS_TRIGGER) {
       return ok(
         db
           .prepare(
-            "SELECT * FROM messages WHERE status = ? ORDER BY created_at ASC LIMIT ?",
+            "SELECT * FROM tasks WHERE status = ? ORDER BY created_at ASC LIMIT ?",
           )
           .all(status, limit),
       );
@@ -308,34 +308,38 @@ if (!IS_TRIGGER) {
     },
     async ({ task_id }) => {
       const db = getDb();
-      const message = db
-        .prepare("SELECT * FROM messages WHERE id = ?")
+      const task = db
+        .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(task_id);
-      if (!message) return err(`Task ${task_id} not found`);
-      return ok(message);
+      if (!task) return err(`Task ${task_id} not found`);
+      return ok(task);
     },
   );
 
   // --- inbox_stats: Queue statistics ---
-  server.tool("inbox_stats", "Get task queue statistics", {}, async () => {
+  server.tool("inbox_stats", "Get inbox and task queue statistics", {}, async () => {
     const db = getDb();
-    const byStatus = db
+    const msgByStatus = db
       .prepare("SELECT status, COUNT(*) as count FROM messages GROUP BY status")
       .all() as { status: string; count: number }[];
-    const byChannel = db
-      .prepare(
-        "SELECT channel, COUNT(*) as count FROM messages GROUP BY channel",
-      )
-      .all() as { channel: string; count: number }[];
-    const total = db
-      .prepare("SELECT COUNT(*) as count FROM messages")
-      .get() as { count: number };
+    const taskByStatus = db
+      .prepare("SELECT status, COUNT(*) as count FROM tasks GROUP BY status")
+      .all() as { status: string; count: number }[];
+    const msgTotal = (
+      db.prepare("SELECT COUNT(*) as count FROM messages").get() as { count: number }
+    ).count;
+    const taskTotal = (
+      db.prepare("SELECT COUNT(*) as count FROM tasks").get() as { count: number }
+    ).count;
     return ok({
-      total: total.count,
-      by_status: Object.fromEntries(byStatus.map((r) => [r.status, r.count])),
-      by_channel: Object.fromEntries(
-        byChannel.map((r) => [r.channel, r.count]),
-      ),
+      inbox: {
+        total: msgTotal,
+        by_status: Object.fromEntries(msgByStatus.map((r) => [r.status, r.count])),
+      },
+      tasks: {
+        total: taskTotal,
+        by_status: Object.fromEntries(taskByStatus.map((r) => [r.status, r.count])),
+      },
     });
   });
 }

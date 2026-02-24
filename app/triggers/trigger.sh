@@ -115,7 +115,7 @@ if [ "$SESSION_MODE" = "persistent" ]; then
 
 ${PAYLOAD:-$PROMPT}
 
-Process this message using inbox_mark and the channel CLI tools (signal send / email reply)."
+Process this message using the channel CLI tools (signal send / email reply) as appropriate."
       fi
 
       if echo "$INJECT_MSG" | python3 -c "

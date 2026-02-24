@@ -53,16 +53,8 @@ function channelIcon(ch: string): string {
     email: "@",
     web: "W",
     internal: "I",
-    task: "T",
   };
   return icons[ch] || "?";
-}
-
-function getMessageSource(m: any): { type: string; label: string; isTrigger: boolean } {
-  if (m.channel === 'task' && m.sender?.startsWith('trigger:')) {
-    return { type: 'trigger', label: m.sender.replace('trigger:', ''), isTrigger: true };
-  }
-  return { type: m.channel, label: m.channel, isTrigger: false };
 }
 
 function statusColor(s: string): string {
@@ -72,7 +64,7 @@ function statusColor(s: string): string {
       ? "#5c9cf5"
       : s === "cancelled"
         ? "#999"
-        : "#4caf50";
+        : "#4caf50"; // done → green
 }
 
 function timeAgo(dt: string): string {
@@ -365,23 +357,26 @@ const app = new Hono();
 app.get("/", (c) => {
   const sessionRunning = existsSync(LOCK);
 
-  // Task statistics
+  // Task statistics (from tasks table)
   const taskStatusCounts = db
-    .prepare("SELECT status, COUNT(*) as c FROM messages WHERE channel='task' GROUP BY status")
+    .prepare("SELECT status, COUNT(*) as c FROM tasks GROUP BY status")
     .all() as any[];
   const taskCounts: Record<string, number> = {};
   for (const row of taskStatusCounts) {
     taskCounts[row.status] = row.c;
   }
 
+  // Inbox message count
+  const inboxTotal = (db.prepare("SELECT COUNT(*) as c FROM messages").get() as any)?.c || 0;
+
   // Active tasks (pending or processing)
   const activeTasks = db
-    .prepare("SELECT * FROM messages WHERE channel='task' AND status IN ('pending', 'processing') ORDER BY created_at DESC LIMIT 10")
+    .prepare("SELECT * FROM tasks WHERE status IN ('pending', 'processing') ORDER BY created_at DESC LIMIT 10")
     .all() as any[];
 
   // Recent completed tasks (done or cancelled)
   const recentCompleted = db
-    .prepare("SELECT * FROM messages WHERE channel='task' AND status IN ('done', 'cancelled') ORDER BY created_at DESC LIMIT 5")
+    .prepare("SELECT * FROM tasks WHERE status IN ('done', 'cancelled') ORDER BY created_at DESC LIMIT 5")
     .all() as any[];
 
   // Recent journal files (YYYY-MM-DD.md directly in memory/)
@@ -405,38 +400,33 @@ app.get("/", (c) => {
       <div class="stat"><div class="num" style="color:#5c9cf5">${taskCounts["processing"] || 0}</div><div class="label">Processing</div></div>
       <div class="stat"><div class="num" style="color:#4caf50">${taskCounts["done"] || 0}</div><div class="label">Done</div></div>
       <div class="stat"><div class="num" style="color:#999">${taskCounts["cancelled"] || 0}</div><div class="label">Cancelled</div></div>
+      <div class="stat"><div class="num">${inboxTotal}</div><div class="label">Inbox</div></div>
     </div>
 
     ${activeTasks.length > 0 ? `
     <div class="card"><h3>Active Tasks</h3>
     <table>
-      <tr><th>ID</th><th>Source</th><th>Content</th><th>Status</th><th>Time</th></tr>
-      ${activeTasks.map((t) => {
-        const source = getMessageSource(t);
-        return `<tr>
+      <tr><th>ID</th><th>Trigger</th><th>Content</th><th>Status</th><th>Time</th></tr>
+      ${activeTasks.map((t) => `<tr>
         <td>#${t.id}</td>
-        <td>${source.isTrigger ? `<span class="badge" style="background:#7c6ef020;color:#7c6ef0">${safe(source.label)}</span>` : safe(source.label)}</td>
+        <td><span class="badge" style="background:#7c6ef020;color:#7c6ef0">${safe(t.trigger_name)}</span></td>
         <td>${safe((t.content || "").slice(0, 60))}${t.content?.length > 60 ? "..." : ""}</td>
         <td><span class="badge" style="background:${statusColor(t.status)}20;color:${statusColor(t.status)}">${t.status}</span></td>
         <td class="text-muted">${timeAgo(t.created_at)}</td>
-      </tr>`;
-      }).join("")}
+      </tr>`).join("")}
     </table></div>` : ""}
 
     ${recentCompleted.length > 0 ? `
     <div class="card"><h3>Recent Completed Tasks</h3>
     <table>
-      <tr><th>ID</th><th>Source</th><th>Content</th><th>Status</th><th>Time</th></tr>
-      ${recentCompleted.map((t) => {
-        const source = getMessageSource(t);
-        return `<tr>
+      <tr><th>ID</th><th>Trigger</th><th>Content</th><th>Status</th><th>Time</th></tr>
+      ${recentCompleted.map((t) => `<tr>
         <td>#${t.id}</td>
-        <td>${source.isTrigger ? `<span class="badge" style="background:#7c6ef020;color:#7c6ef0">${safe(source.label)}</span>` : safe(source.label)}</td>
+        <td><span class="badge" style="background:#7c6ef020;color:#7c6ef0">${safe(t.trigger_name)}</span></td>
         <td>${safe((t.content || "").slice(0, 60))}${t.content?.length > 60 ? "..." : ""}</td>
         <td><span class="badge" style="background:${statusColor(t.status)}20;color:${statusColor(t.status)}">${t.status}</span></td>
         <td class="text-muted">${timeAgo(t.created_at)}</td>
-      </tr>`;
-      }).join("")}
+      </tr>`).join("")}
     </table></div>` : ""}
 
     <div class="card"><h3>Recent Journals</h3>
@@ -457,34 +447,18 @@ app.get("/", (c) => {
 
 // ============ INBOX ============
 app.get("/inbox", (c) => {
-  const status = c.req.query("status") || "";
   const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
   const limit = 100;
   const offset = (page - 1) * limit;
 
-  let countSql = "SELECT COUNT(*) as c FROM messages";
-  let sql = "SELECT * FROM messages";
-  const params: any[] = [];
-  if (status) {
-    countSql += " WHERE status = ?";
-    sql += " WHERE status = ?";
-    params.push(status);
-  }
-  sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+  const countSql = "SELECT COUNT(*) as c FROM messages";
+  const sql = "SELECT * FROM messages ORDER BY created_at DESC LIMIT ? OFFSET ?";
 
-  const total = (db.prepare(countSql).get(...params) as any)?.c || 0;
-  const msgs = db.prepare(sql).all(...params, limit, offset) as any[];
+  const total = (db.prepare(countSql).get() as any)?.c || 0;
+  const msgs = db.prepare(sql).all(limit, offset) as any[];
   const totalPages = Math.ceil(total / limit);
 
-  const filters = ["", "pending", "processing", "done", "cancelled"];
-  const filterHtml = filters
-    .map(
-      (f) =>
-        `<a href="/inbox${f ? "?status=" + f : ""}" class="btn btn-sm ${status === f ? "" : "btn-outline"}" style="margin-right:4px">${f || "All"}</a>`,
-    )
-    .join("");
-
-  const qs = status ? `&status=${status}` : "";
+  const qs = "";
   const paginationHtml =
     totalPages > 1
       ? `<div class="flex mt-8" style="justify-content:space-between">
@@ -495,28 +469,19 @@ app.get("/inbox", (c) => {
 
   const html = `
     <h1>Inbox</h1>
-    <div class="mb-16">${filterHtml}</div>
     <table>
-      <tr><th>Source</th><th>Sender</th><th>Content</th><th>Status</th><th>Time</th></tr>
+      <tr><th>Channel</th><th>Sender</th><th>Content</th><th>Time</th></tr>
       ${msgs
         .map(
-          (m) => {
-            const source = getMessageSource(m);
-            return `
+          (m) => `
         <tr class="msg-row" hx-get="/inbox/${m.id}" hx-target="#detail-${m.id}" hx-swap="innerHTML">
-          <td>
-            ${source.isTrigger
-              ? `<span class="badge" style="background:#7c6ef020;color:#7c6ef0" title="Trigger">${safe(source.label)}</span>`
-              : `<span class="ch-icon" title="${safe(source.label)}">${channelIcon(m.channel)}</span>`}
-          </td>
+          <td><span class="ch-icon" title="${safe(m.channel)}">${channelIcon(m.channel)}</span></td>
           <td>${safe(m.sender || "-")}</td>
           <td>${safe((m.content || "").slice(0, 80))}${m.content?.length > 80 ? "..." : ""}</td>
-          <td><span class="badge" style="background:${statusColor(m.status)}20;color:${statusColor(m.status)}">${m.status}</span></td>
           <td class="text-muted">${timeAgo(m.created_at)}</td>
         </tr>
         <tr id="detail-${m.id}"></tr>
-      `;
-          }
+      `,
         )
         .join("")}
     </table>
@@ -531,14 +496,11 @@ app.get("/inbox/:id", (c) => {
     .prepare("SELECT * FROM messages WHERE id = ?")
     .get(c.req.param("id")) as any;
   if (!msg) return c.html("<td colspan=5>Not found</td>");
-  return c.html(`<td colspan="5"><div class="msg-detail">
-    <strong>ID:</strong> ${msg.id} | <strong>Channel:</strong> ${msg.channel} | <strong>Sender:</strong> ${safe(msg.sender || "-")}
-    <strong>Created:</strong> ${msg.created_at} | <strong>Status:</strong> ${msg.status}
-    ${msg.processed_at ? `| <strong>Processed:</strong> ${msg.processed_at}` : ""}
+  return c.html(`<td colspan="4"><div class="msg-detail">
+    <strong>ID:</strong> ${msg.id} | <strong>Channel:</strong> ${msg.channel} | <strong>Sender:</strong> ${safe(msg.sender || "-")} | <strong>Created:</strong> ${msg.created_at}
     <hr style="border-color:#3a3b55;margin:8px 0">
     <strong>Content:</strong>
 ${safe(msg.content)}
-    ${msg.response_summary ? `<hr style="border-color:#3a3b55;margin:8px 0"><strong>Response:</strong>\n${safe(msg.response_summary)}` : ""}
   </div></td>`);
 });
 
@@ -1174,26 +1136,22 @@ app.get("/tasks", (c) => {
   const limit = 50;
   const offset = (page - 1) * limit;
 
-  // Stats
-  const taskCounts = db
-    .prepare(
-      "SELECT status, COUNT(*) as c FROM messages WHERE channel='task' GROUP BY status",
-    )
+  // Stats from tasks table
+  const taskStatusCounts = db
+    .prepare("SELECT status, COUNT(*) as c FROM tasks GROUP BY status")
     .all() as any[];
   const tc: Record<string, number> = {};
-  let taskTotal = 0;
-  for (const row of taskCounts) {
+  for (const row of taskStatusCounts) {
     tc[row.status] = row.c;
-    taskTotal += row.c;
   }
 
   // Filtered query
-  let countSql = "SELECT COUNT(*) as c FROM messages WHERE channel='task'";
-  let sql = "SELECT * FROM messages WHERE channel='task'";
+  let countSql = "SELECT COUNT(*) as c FROM tasks";
+  let sql = "SELECT * FROM tasks";
   const params: any[] = [];
   if (status) {
-    countSql += " AND status = ?";
-    sql += " AND status = ?";
+    countSql += " WHERE status = ?";
+    sql += " WHERE status = ?";
     params.push(status);
   }
   sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
@@ -1205,9 +1163,9 @@ app.get("/tasks", (c) => {
   // Active awaits
   const awaits = db
     .prepare(
-      `SELECT ta.task_id, ta.trigger_name, ta.session_key, ta.created_at, m.status as task_status, m.content
-     FROM task_awaits ta JOIN messages m ON ta.task_id = m.id
-     WHERE m.status IN ('pending', 'processing')
+      `SELECT ta.task_id, ta.trigger_name, ta.session_key, ta.created_at, t.status as task_status, t.content
+     FROM task_awaits ta JOIN tasks t ON ta.task_id = t.id
+     WHERE t.status IN ('pending', 'processing')
      ORDER BY ta.created_at DESC`,
     )
     .all() as any[];
@@ -1261,13 +1219,14 @@ app.get("/tasks", (c) => {
 
     <div class="mb-16">${filterHtml}</div>
     <table>
-      <tr><th>ID</th><th>Content</th><th>Status</th><th>Response</th><th>Created</th></tr>
+      <tr><th>ID</th><th>Trigger</th><th>Content</th><th>Status</th><th>Response</th><th>Created</th></tr>
       ${tasks
         .map(
           (t) => `
         <tr class="msg-row" hx-get="/tasks/${t.id}" hx-target="#task-detail-${t.id}" hx-swap="innerHTML">
           <td>#${t.id}</td>
-          <td>${safe((t.content || "").slice(0, 100))}${t.content?.length > 100 ? "..." : ""}</td>
+          <td><span class="badge" style="background:#7c6ef020;color:#7c6ef0">${safe(t.trigger_name)}</span></td>
+          <td>${safe((t.content || "").slice(0, 80))}${t.content?.length > 80 ? "..." : ""}</td>
           <td><span class="badge" style="background:${statusColor(t.status)}20;color:${statusColor(t.status)}">${t.status}</span></td>
           <td class="text-muted">${t.response_summary ? safe(t.response_summary.slice(0, 60)) + (t.response_summary.length > 60 ? "..." : "") : "-"}</td>
           <td class="text-muted">${timeAgo(t.created_at)}</td>
@@ -1285,17 +1244,17 @@ app.get("/tasks", (c) => {
 
 app.get("/tasks/:id", (c) => {
   const task = db
-    .prepare("SELECT * FROM messages WHERE id = ? AND channel='task'")
+    .prepare("SELECT * FROM tasks WHERE id = ?")
     .get(c.req.param("id")) as any;
-  if (!task) return c.html("<td colspan=5>Not found</td>");
+  if (!task) return c.html("<td colspan=6>Not found</td>");
 
   const awaiter = db
     .prepare("SELECT * FROM task_awaits WHERE task_id = ?")
     .get(task.id) as any;
 
-  return c.html(`<td colspan="5"><div class="msg-detail">
-    <strong>ID:</strong> ${task.id} | <strong>Status:</strong> ${task.status}
-    <strong>Created:</strong> ${task.created_at}
+  return c.html(`<td colspan="6"><div class="msg-detail">
+    <strong>ID:</strong> ${task.id} | <strong>Trigger:</strong> ${safe(task.trigger_name)} | <strong>Status:</strong> ${task.status}
+    <br><strong>Created:</strong> ${task.created_at}
     ${task.processed_at ? `| <strong>Processed:</strong> ${task.processed_at}` : ""}
     ${awaiter ? `<br><strong>Awaited by:</strong> ${safe(awaiter.trigger_name)} (key: ${safe(awaiter.session_key)})` : ""}
     <hr style="border-color:#3a3b55;margin:8px 0">
