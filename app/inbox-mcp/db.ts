@@ -17,7 +17,7 @@ function createTables(database: Database): void {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
-    CREATE INDEX IF NOT EXISTS idx_messages_status_created ON messages(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel, created_at);
 
     CREATE TABLE IF NOT EXISTS tasks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,7 +296,6 @@ function migrateSchema(database: Database): void {
       throw e;
     }
   }
-}
 
   // Remove status column from messages (messages are a fire-and-forget log)
   const msgForStatus = database.prepare(

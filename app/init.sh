@@ -111,7 +111,7 @@ fi
 
 # Ensure web-chat trigger exists (idempotent migration)
 sqlite3 "$DB" "INSERT OR IGNORE INTO triggers (name, type, description, channel, prompt, session_mode) VALUES (
-  'web-chat', 'manual', 'Web UI chat message handler', 'web', '', 'persistent');"
+  'web-chat', 'manual', 'Web UI chat message handler', 'web', '', 'persistent');" || echo "  ⚠ web-chat trigger insert failed (non-fatal)"
 
 # ── Phase 7: User Extensions ──
 echo "[$(date)] Phase 7: User extensions"
