@@ -75,7 +75,7 @@ Atlas runs entirely in a single Docker container managed by supervisord:
 | **watcher** | — | inotifywait loop, resumes Claude on `.wake` |
 | **supercronic** | — | Cron job runner |
 
-See [docs/Architecture.md](docs/Architecture.md) for details.
+See [docs/Architecture.md](docs/Architecture.md) for component overview, [docs/inbox-mcp.md](docs/inbox-mcp.md) for MCP tools, and [docs/qmd-memory.md](docs/qmd-memory.md) for memory search.
 
 ## Triggers
 
@@ -101,7 +101,7 @@ curl -X POST http://localhost:8080/api/webhook/deploy-notify \
   -d '{"repo": "myapp", "branch": "main", "status": "success"}'
 ```
 
-See [docs/Triggers.md](docs/Triggers.md) for the full guide.
+See [docs/Triggers.md](docs/Triggers.md) for the full guide and [docs/watcher.md](docs/watcher.md) for the wake system.
 
 ## Directory Structure
 
@@ -139,6 +139,8 @@ workspace/
 ├── config.yml                    # System configuration
 └── user-extensions.sh            # Custom package installs
 ```
+
+See [docs/directory-structure.md](docs/directory-structure.md) for complete layout.
 
 ## Configuration
 
@@ -199,6 +201,8 @@ Claude has access to these tools via the inbox-mcp server:
 - `qmd_vector_search` — Semantic vector search
 - `qmd_deep_search` — Combined hybrid search
 
+See [docs/inbox-mcp.md](docs/inbox-mcp.md) for inbox/trigger tools, [docs/qmd-memory.md](docs/qmd-memory.md) for memory tools, and [docs/hooks.md](docs/hooks.md) for lifecycle hooks.
+
 ## Logs
 
 ```bash
@@ -222,6 +226,21 @@ docker compose exec atlas bash
 # Check service status
 docker compose exec atlas supervisorctl status
 ```
+
+See [docs/development.md](docs/development.md) for more development commands.
+
+## Documentation
+
+- [docs/Architecture.md](docs/Architecture.md) — Component overview
+- [docs/inbox-mcp.md](docs/inbox-mcp.md) — Inbox system and MCP tools
+- [docs/hooks.md](docs/hooks.md) — Lifecycle hooks
+- [docs/watcher.md](docs/watcher.md) — Event-driven wake system
+- [docs/qmd-memory.md](docs/qmd-memory.md) — Memory and search
+- [docs/web-ui.md](docs/web-ui.md) — Dashboard and API
+- [docs/directory-structure.md](docs/directory-structure.md) — Filesystem layout
+- [docs/development.md](docs/development.md) — Developer guide
+- [docs/Triggers.md](docs/Triggers.md) — Triggers guide
+- [docs/Integrations.md](docs/Integrations.md) — Signal and Email
 
 ## License
 
