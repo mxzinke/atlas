@@ -78,9 +78,12 @@ fi
 
 # Optional: second argument is payload (for webhook relay)
 PAYLOAD="${2:-}"
-if [ -n "$PAYLOAD" ]; then
-  PROMPT=$(echo -n "$PROMPT" | safe_replace "{{payload}}" "$PAYLOAD")
-fi
+# Substitute all placeholders (consistent with IPC inject path)
+PROMPT=$(echo -n "$PROMPT" | safe_replace \
+  "{{payload}}"      "${PAYLOAD}" \
+  "{{sender}}"       "$SESSION_KEY" \
+  "{{channel}}"      "$CHANNEL" \
+  "{{trigger_name}}" "$TRIGGER_NAME")
 
 # Update trigger stats
 sqlite3 "$DB" "UPDATE triggers SET last_run = datetime('now'), run_count = run_count + 1 WHERE name = '${TRIGGER_NAME//\'/\'\'}';"
@@ -154,7 +157,10 @@ fi
 # Use --output-format json to reliably capture the session ID (avoids race with concurrent triggers)
 TRIGGER_OUT=$(mktemp /tmp/trigger-out-XXXXXX.json)
 
+# Unset CLAUDECODE so spawning a trigger session while a worker is running doesn't fail
+# with "Claude Code cannot be launched inside another Claude Code session"
 ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
+  env -u CLAUDECODE \
   claude-atlas --mode trigger "${CLAUDE_ARGS[@]}" --output-format json "$PROMPT" > "$TRIGGER_OUT" 2>>"$LOG" || true
 
 # Log the text result from JSON output
