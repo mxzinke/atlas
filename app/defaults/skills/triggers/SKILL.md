@@ -183,9 +183,10 @@ New Signal message received:
 
 {{payload}}
 
-The payload contains inbox_message_id and sender (phone number).
-Reply directly via CLI: signal send <number> "message"
-Escalate complex tasks via task_create.
+The JSON payload contains: sender (phone number), sender_name, message, inbox_message_id.
+Reply using: signal send "<sender>" "your message"
+Keep replies short and conversational — this is texting, not email.
+Only use task_create for work that genuinely requires deep investigation.
 ```
 
 **Step 3: Add supervisor services**
