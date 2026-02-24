@@ -179,14 +179,11 @@ trigger create \
 
 Write `workspace/triggers/signal-chat/prompt.md`:
 ```
-New Signal message received:
-
+<message from="{{sender}}">
 {{payload}}
+</message>
 
-The JSON payload contains: sender (phone number), sender_name, message, inbox_message_id.
-Reply using: signal send "<sender>" "your message"
-Keep replies short and conversational — this is texting, not email.
-Only use task_create for work that genuinely requires deep investigation.
+Please respond directly using `signal send "{{sender}}" "..."`.
 ```
 
 **Step 3: Add supervisor services**

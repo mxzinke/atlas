@@ -1,6 +1,5 @@
-New Signal message from {{sender}}:
-
+<message from="{{sender}}">
 {{payload}}
+</message>
 
-Reply using: signal send "{{sender}}" "your message"
-Keep it short and conversational — this is texting, not email.
+Please respond directly using `signal send "{{sender}}" "..."`.
