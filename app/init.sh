@@ -161,6 +161,8 @@ echo "  MCP config symlinked: $WORKSPACE/.mcp.json -> /atlas/app/.mcp.json"
 mkdir -p "$WORKSPACE/.claude"
 ln -sf /atlas/app/.claude/settings.json "$WORKSPACE/.claude/settings.json"
 echo "  Settings symlinked: $WORKSPACE/.claude/settings.json -> /atlas/app/.claude/settings.json"
+ln -sf "$WORKSPACE/skills" "$WORKSPACE/.claude/skills"
+echo "  Skills symlinked: $WORKSPACE/.claude/skills -> $WORKSPACE/skills"
 
 # Disable remote MCP connectors (claudeai-mcp) that cause session hangs.
 # Claude Code caches the gate value from .claude.json on startup.

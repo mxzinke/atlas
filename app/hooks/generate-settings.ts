@@ -4,7 +4,7 @@
  * Reads model preferences and produces the hooks configuration.
  * Run from init.sh on every container start.
  */
-import { readFileSync, writeFileSync, mkdirSync, symlinkSync, lstatSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
 const CONFIG_PATH = "/atlas/workspace/config.yml";
 const SETTINGS_PATH = "/atlas/app/.claude/settings.json";
@@ -168,20 +168,5 @@ const settings: Record<string, unknown> = {
 
 mkdirSync("/atlas/app/.claude", { recursive: true });
 writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
-
-// Symlink skills from workspace into Claude Code's discovery path
-const skillsLink = "/atlas/app/.claude/skills";
-const skillsTarget = "/atlas/workspace/skills";
-try {
-  lstatSync(skillsLink);
-} catch {
-  // Link doesn't exist yet — create it
-  try {
-    symlinkSync(skillsTarget, skillsLink);
-    console.log(`Skills symlinked: ${skillsLink} -> ${skillsTarget}`);
-  } catch (e) {
-    console.log(`Warning: could not symlink skills: ${e}`);
-  }
-}
 
 console.log(`Settings generated: main=${models.main}, subagent_review=${models.subagent_review}, hooks=${models.hooks}`);
