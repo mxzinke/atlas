@@ -32,6 +32,17 @@ SIGNAL_DB_DIR = "/atlas/workspace/inbox/signal"
 WAKE_PATH = "/atlas/workspace/inbox/.wake"
 TRIGGER_SCRIPT = "/atlas/app/triggers/trigger.sh"
 TRIGGER_NAME = "signal-chat"
+DAEMON_SOCKET = "/tmp/signal.sock"
+
+# signal-cli binary: check PATH first, then known workspace location
+def _find_signal_cli_bin():
+    import shutil
+    if shutil.which("signal-cli"):
+        return "signal-cli"
+    for p in ["/atlas/workspace/bin/signal-cli-bin", "/atlas/workspace/bin/signal-cli"]:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
 
 
 # --- Config ---
@@ -115,9 +126,13 @@ def cmd_poll(config, once=False):
         print(f"[{datetime.now()}] ERROR: No Signal number configured", file=sys.stderr)
         sys.exit(1)
 
+    bin_path = _find_signal_cli_bin()
+    if not bin_path:
+        print(f"[{datetime.now()}] ERROR: signal-cli binary not found", file=sys.stderr)
+        sys.exit(1)
     try:
         result = subprocess.run(
-            ["signal-cli", "-a", number, "receive", "--json"],
+            [bin_path, "-a", number, "receive", "--output=json"],
             capture_output=True, text=True, timeout=30,
         )
         output = result.stdout.strip()
@@ -214,24 +229,55 @@ def cmd_incoming(config, sender, message, name="", timestamp=""):
 
 # --- SEND command ---
 
+def _send_via_socket(to, message):
+    """Send via the running signal-cli daemon JSON-RPC socket."""
+    import socket as _socket
+    with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as s:
+        s.settimeout(30)
+        s.connect(DAEMON_SOCKET)
+        req = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "send",
+            "params": {"recipient": [to], "message": message},
+        })
+        s.sendall(req.encode() + b"\n")
+        # Read until newline (single JSON-RPC response)
+        buf = b""
+        while b"\n" not in buf:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        resp = json.loads(buf.split(b"\n")[0])
+        if "error" in resp:
+            raise RuntimeError(resp["error"].get("message", str(resp["error"])))
+
+
+def _send_via_cli(number, to, message):
+    """Send via direct signal-cli invocation (fallback when no daemon socket)."""
+    bin_path = _find_signal_cli_bin()
+    if not bin_path:
+        raise FileNotFoundError("signal-cli binary not found")
+    result = subprocess.run(
+        [bin_path, "-a", number, "send", "-m", message, to],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"signal-cli send failed: {result.stderr.strip()}")
+
+
 def cmd_send(config, to, message):
-    """Send a Signal message via signal-cli."""
+    """Send a Signal message — via daemon socket if running, otherwise via CLI."""
     number = config["number"]
     if not number:
         print("ERROR: No Signal number configured", file=sys.stderr)
         sys.exit(1)
 
     db = get_signal_db(config)
-
     try:
-        result = subprocess.run(
-            ["signal-cli", "-a", number, "send", "-m", message, to],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            print(f"ERROR: signal-cli send failed: {result.stderr}", file=sys.stderr)
-            db.close()
-            sys.exit(1)
+        if os.path.exists(DAEMON_SOCKET):
+            _send_via_socket(to, message)
+        else:
+            _send_via_cli(number, to, message)
 
         update_contact(db, to)
         db.execute("""
@@ -240,9 +286,8 @@ def cmd_send(config, to, message):
         """, (to, message[:8000], datetime.now().isoformat()))
         db.commit()
         print(f"Signal message sent to {to}")
-
-    except FileNotFoundError:
-        print("ERROR: signal-cli not installed", file=sys.stderr)
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
         db.close()
