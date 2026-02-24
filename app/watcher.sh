@@ -7,6 +7,8 @@ LOCK_FILE=/atlas/workspace/.session-running
 FLOCK_FILE=/atlas/workspace/.session.flock
 CLAUDE_JSON="$HOME/.claude.json"
 
+source /atlas/app/hooks/failure-handler.sh
+
 # Disable remote MCP connectors that hang on startup.
 # Claude Code caches the gate value from .claude.json; patching it
 # before each invocation prevents the remote MCP connection attempt.
@@ -38,16 +40,28 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' 
 
       disable_remote_mcp
 
+      set +e
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming session: $SESSION_ID"
-        claude-atlas --mode worker --resume "$SESSION_ID" -p --dangerously-skip-permissions "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log || true
+        claude-atlas --mode worker --resume "$SESSION_ID" --dangerously-skip-permissions \
+          -p "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log
       else
         echo "[$(date)] Starting new session"
-        claude-atlas --mode worker -p --dangerously-skip-permissions "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log || true
+        claude-atlas --mode worker --dangerously-skip-permissions \
+          -p "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log
       fi
+      CLAUDE_EXIT=${PIPESTATUS[0]}
+      set -e
 
       rm -f "$LOCK_FILE"
-      echo "[$(date)] Session ended, back to sleep"
+
+      if [ "$CLAUDE_EXIT" -eq 0 ]; then
+        on_session_success
+        echo "[$(date)] Session ended, back to sleep"
+      else
+        echo "[$(date)] Session failed with exit $CLAUDE_EXIT, entering backoff"
+        on_session_failure "$CLAUDE_EXIT"
+      fi
     ) 9>"$FLOCK_FILE"
 
   # --- Trigger session re-awakening (.wake-<trigger>-<task_id> file) ---
@@ -95,7 +109,7 @@ Relay this result to the original sender now."
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming trigger $TRIGGER_NAME (session=$SESSION_ID)" | tee -a "$LOG"
         ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
-          claude-atlas --mode trigger --resume "$SESSION_ID" -p --dangerously-skip-permissions "$RESUME_MSG" 2>&1 | tee -a "$LOG" || true
+          claude-atlas --mode trigger --resume "$SESSION_ID" --dangerously-skip-permissions -p "$RESUME_MSG" 2>&1 | tee -a "$LOG" || true
       elif [ -n "$TRIGGER_NAME" ]; then
         echo "[$(date)] No session ID for $TRIGGER_NAME — re-spawning via trigger.sh" | tee -a "$LOG"
         /atlas/app/triggers/trigger.sh "$TRIGGER_NAME" "$RESUME_MSG" "$SESSION_KEY" 2>&1 | tee -a "$LOG" || true

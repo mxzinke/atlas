@@ -42,3 +42,9 @@ team:
 web_ui:
   port: 8080
   bind: "127.0.0.1"
+
+failure_handling:
+  notification_command: ""       # Shell command run once after threshold (e.g. "signal send '+1...' 'Atlas API unavailable'")
+  backoff_initial_seconds: 30
+  backoff_max_seconds: 900       # Cap at 15 minutes
+  notification_threshold_minutes: 30
