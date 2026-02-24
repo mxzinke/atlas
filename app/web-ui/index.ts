@@ -69,7 +69,7 @@ function statusColor(s: string): string {
 
 function timeAgo(dt: string): string {
   if (!dt) return "";
-  const diff = Date.now() - new Date(dt + "Z").getTime();
+  const diff = Date.now() - new Date(dt.endsWith("Z") ? dt : dt + "Z").getTime();
   const m = Math.floor(diff / 60000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
