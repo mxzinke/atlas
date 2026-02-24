@@ -159,9 +159,17 @@ TRIGGER_OUT=$(mktemp /tmp/trigger-out-XXXXXX.json)
 
 # Unset CLAUDECODE so spawning a trigger session while a worker is running doesn't fail
 # with "Claude Code cannot be launched inside another Claude Code session"
+# timeout 300: kill the session after 5 minutes to avoid hanging on corrupted resume state
 ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
   env -u CLAUDECODE \
-  claude-atlas --mode trigger "${CLAUDE_ARGS[@]}" --output-format json "$PROMPT" > "$TRIGGER_OUT" 2>>"$LOG" || true
+  timeout 300 claude-atlas --mode trigger "${CLAUDE_ARGS[@]}" --output-format json "$PROMPT" > "$TRIGGER_OUT" 2>>"$LOG" || {
+    EXIT=$?
+    if [ $EXIT -eq 124 ]; then
+      echo "[$(date)] ⚠ Trigger session timed out after 5min (key=$SESSION_KEY) — clearing stale session" | tee -a "$LOG"
+      # Clear stale session so next message starts fresh instead of hanging again
+      sqlite3 "$DB" "DELETE FROM trigger_sessions WHERE trigger_name='${TRIGGER_NAME//\'/\'\'}' AND session_key='${SESSION_KEY//\'/\'\'}';" 2>/dev/null || true
+    fi
+  }
 
 # Log the text result from JSON output
 python3 -c "
