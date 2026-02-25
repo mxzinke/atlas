@@ -31,6 +31,7 @@ handle_trigger_wake() {
   echo "[$(date)] Trigger wake event: $TRIGGER_NAME (file=$FILENAME)"
 
   (
+    exec </dev/null >>/atlas/logs/watcher.log 2>&1
     flock -n 200 || { echo "[$(date)] Trigger $TRIGGER_NAME already running, skipping"; exit 0; }
 
     TEMP_WAKE=$(mktemp /tmp/wake-XXXXXX.json)
@@ -124,6 +125,7 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' 
 
     # Atomic lock via flock: prevents concurrent sessions and auto-releases on crash/kill.
     (
+      exec </dev/null >>/atlas/logs/watcher.log 2>&1
       flock -n 9 || { echo "[$(date)] Session already running, skipping"; exit 0; }
 
       touch "$LOCK_FILE"  # web-ui status indicator
@@ -136,13 +138,13 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' 
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming session: $SESSION_ID"
         claude-atlas --mode worker --resume "$SESSION_ID" --dangerously-skip-permissions \
-          -p "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log
+          -p "You have new tasks. Use get_next_task() to process them." >> /atlas/logs/session.log 2>&1
       else
         echo "[$(date)] Starting new session"
         claude-atlas --mode worker --dangerously-skip-permissions \
-          -p "You have new tasks. Use get_next_task() to process them." 2>&1 | tee -a /atlas/logs/session.log
+          -p "You have new tasks. Use get_next_task() to process them." >> /atlas/logs/session.log 2>&1
       fi
-      CLAUDE_EXIT=${PIPESTATUS[0]}
+      CLAUDE_EXIT=$?
       set -e
 
       rm -f "$LOCK_FILE"
