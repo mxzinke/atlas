@@ -103,6 +103,7 @@ startup_recovery() {
       [ -f "$WAKE_FILE" ] && continue  # already handled in Pass 1
       echo "[$(date)] Startup recovery: recreating wake for task $task_id ($trigger_name)"
       printf '%s' "$row" > "$WAKE_FILE"
+      sqlite3 "$DB" "DELETE FROM task_awaits WHERE task_id = $task_id" 2>/dev/null || true
       handle_trigger_wake "$WAKE_FILE"
     done
 }
