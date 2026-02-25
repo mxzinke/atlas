@@ -67,12 +67,18 @@ function wakeTriggerIfAwaiting(taskId: number, responseSummary: string): void {
   });
 
   mkdirSync("/atlas/workspace/inbox", { recursive: true });
-  writeFileSync(
-    `/atlas/workspace/inbox/.wake-${awaiter.trigger_name}-${taskId}`,
-    wakeData,
-  );
+  try {
+    writeFileSync(
+      `/atlas/workspace/inbox/.wake-${awaiter.trigger_name}-${taskId}`,
+      wakeData,
+    );
+  } catch (e) {
+    // Leave task_awaits intact — watcher startup scan will recover this
+    console.error(`[wake] Failed to write wake file for task ${taskId}: ${e}`);
+    return;
+  }
 
-  // Cleanup await record
+  // Only delete AFTER wake file is confirmed on disk
   db.prepare("DELETE FROM task_awaits WHERE task_id = ?").run(taskId);
 }
 
