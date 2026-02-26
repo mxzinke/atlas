@@ -85,4 +85,5 @@ if [ -n "$SYSTEM_PROMPT" ]; then
 fi
 FINAL_ARGS+=("${CLAUDE_ARGS[@]}")
 
+export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 exec claude "${FINAL_ARGS[@]}"
