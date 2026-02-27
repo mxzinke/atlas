@@ -1206,33 +1206,50 @@ app.post("/settings/extensions", async (c) => {
 
 // --- Analytics ---
 app.get("/analytics", (c) => {
+  const filterDate = c.req.query("date") || "";
+  const filterType = c.req.query("type") || "";
+
+  // Build WHERE clause for filtered queries
+  const whereParts: string[] = [];
+  const whereParams: any[] = [];
+  if (filterDate) { whereParts.push("date(created_at) = ?"); whereParams.push(filterDate); }
+  if (filterType) { whereParts.push("session_type = ?"); whereParams.push(filterType); }
+  const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+
   let metrics: any[] = [];
-  let totals: any = { total_cost: 0, total_tokens: 0, total_sessions: 0 };
-  let week: any = { week_cost: 0 };
+  let totals: any = {};
+  let week7: any = {};
   try {
-    metrics = db.prepare(
-      `SELECT * FROM session_metrics ORDER BY created_at DESC LIMIT 100`
-    ).all() as any[];
+    // Rows: cache_read_tokens excluded from "unique work" sum to avoid double-counting
+    // repeated context on session resume. cost_usd is always accurate (per API call).
     totals = db.prepare(`
       SELECT
-        SUM(cost_usd) as total_cost,
-        SUM(input_tokens + output_tokens) as total_tokens,
-        COUNT(*) as total_sessions
-      FROM session_metrics
-    `).get() as any || totals;
-    week = db.prepare(`
-      SELECT SUM(cost_usd) as week_cost
-      FROM session_metrics
+        COUNT(*) as sessions,
+        SUM(cost_usd) as cost,
+        SUM(duration_ms) as duration_ms,
+        SUM(input_tokens) as input_tokens,
+        SUM(output_tokens) as output_tokens,
+        SUM(cache_creation_tokens) as cache_write_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens
+      FROM session_metrics ${where}
+    `).get(...whereParams) as any || {};
+
+    week7 = db.prepare(`
+      SELECT SUM(cost_usd) as cost FROM session_metrics
       WHERE created_at >= datetime('now', '-7 days')
-    `).get() as any || week;
+    `).get() as any || {};
+
+    metrics = db.prepare(
+      `SELECT * FROM session_metrics ${where} ORDER BY created_at DESC LIMIT 100`
+    ).all(...whereParams) as any[];
   } catch {}
 
-  function fmtCost(v: number | null): string {
-    return v != null ? `$${(v).toFixed(4)}` : "$0.0000";
+  function fmtCost(v: number | null | undefined, decimals = 4): string {
+    return v != null && v > 0 ? `$${v.toFixed(decimals)}` : "$0.0000";
   }
-  function fmtNum(v: number | null): string {
+  function fmtNum(v: number | null | undefined): string {
     if (!v) return "0";
-    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
     if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
     return String(v);
   }
@@ -1252,38 +1269,100 @@ app.get("/analytics", (c) => {
     return `<span class="badge" style="background:${colors[t] || "#3a3b55"};color:#fff">${safe(t)}</span>`;
   }
 
+  const totalCost = totals.cost || 0;
+  const totalDurationMs = totals.duration_ms || 0;
+  const costPerHour = totalDurationMs > 0
+    ? (totalCost / totalDurationMs) * 3_600_000
+    : null;
+
+  // Filter bar
+  const filterQs = (extra: Record<string, string>) => {
+    const p = new URLSearchParams();
+    if (filterDate) p.set("date", filterDate);
+    if (filterType) p.set("type", filterType);
+    for (const [k, v] of Object.entries(extra)) {
+      if (v) p.set(k, v); else p.delete(k);
+    }
+    const s = p.toString();
+    return s ? `?${s}` : "/analytics";
+  };
+
+  const typeOptions = ["", "worker", "trigger", "trigger-relay"];
+  const typeSelect = `<select name="type" onchange="this.form.submit()" style="width:auto;padding:4px 8px;font-size:12px">
+    ${typeOptions.map(t => `<option value="${t}"${filterType === t ? " selected" : ""}>${t || "All types"}</option>`).join("")}
+  </select>`;
+
+  const filterForm = `
+    <form method="GET" action="/analytics" class="flex mb-16" style="gap:8px;flex-wrap:wrap;align-items:center">
+      <span class="text-muted" style="font-size:12px">Filter:</span>
+      <input type="date" name="date" value="${safe(filterDate)}" onchange="this.form.submit()"
+        style="width:auto;padding:4px 8px;font-size:12px">
+      ${typeSelect}
+      ${(filterDate || filterType) ? `<a href="/analytics" class="btn btn-sm btn-outline">Clear</a>` : ""}
+    </form>`;
+
   const rows = metrics.map((m) => `
     <tr>
-      <td class="text-muted">${safe(timeAgo(m.created_at))}</td>
+      <td class="text-muted" style="white-space:nowrap">${safe(timeAgo(m.created_at))}</td>
       <td>${typeBadge(m.session_type)}</td>
-      <td>${m.trigger_name ? safe(m.trigger_name) : '<span class="text-muted">—</span>'}</td>
+      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.trigger_name ? `<a href="${filterQs({ type: "", date: "" })}&type=${encodeURIComponent(m.session_type)}" style="color:#7c6ef0;text-decoration:none">${safe(m.trigger_name)}</a>` : '<span class="text-muted">—</span>'}</td>
       <td>${fmtDuration(m.duration_ms)}</td>
-      <td>${fmtNum(m.input_tokens)}</td>
-      <td>${fmtNum(m.output_tokens)}</td>
-      <td>${fmtNum(m.cache_read_tokens)}</td>
+      <td title="new input">${fmtNum(m.input_tokens)}</td>
+      <td title="output">${fmtNum(m.output_tokens)}</td>
+      <td title="cache writes" style="color:#f0a500">${fmtNum(m.cache_creation_tokens)}</td>
+      <td title="cache reads" style="color:#5c9cf5">${fmtNum(m.cache_read_tokens)}</td>
       <td>${fmtCost(m.cost_usd)}</td>
-      <td><span class="dot" style="background:${m.is_error ? '#f44336' : '#4caf50'}"></span>${m.is_error ? 'error' : 'ok'}</td>
+      <td><span class="dot" style="background:${m.is_error ? "#f44336" : "#4caf50"}"></span>${m.is_error ? "err" : "ok"}</td>
     </tr>`).join("");
+
+  const activeLabel = filterDate || filterType
+    ? ` <span class="text-muted" style="font-size:12px">(filtered)</span>` : "";
 
   const html = `
     <h1>Analytics</h1>
-    <div class="grid" style="grid-template-columns:repeat(4,1fr)">
-      <div class="stat"><div class="num">${fmtCost(totals.total_cost)}</div><div class="label">Total Cost</div></div>
-      <div class="stat"><div class="num">${fmtCost(week.week_cost)}</div><div class="label">Cost (7d)</div></div>
-      <div class="stat"><div class="num">${totals.total_sessions || 0}</div><div class="label">Total Sessions</div></div>
-      <div class="stat"><div class="num">${fmtNum(totals.total_tokens)}</div><div class="label">Total Tokens</div></div>
+    ${filterForm}
+
+    <div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:8px">
+      <div class="stat"><div class="num">${fmtCost(totalCost)}</div><div class="label">Cost${activeLabel}</div></div>
+      <div class="stat"><div class="num">${fmtCost(week7.cost)}</div><div class="label">Cost (7d)</div></div>
+      <div class="stat"><div class="num">${costPerHour != null ? fmtCost(costPerHour, 4) : "—"}</div><div class="label">Est. $/hr${activeLabel}</div></div>
+      <div class="stat"><div class="num">${totals.sessions || 0}</div><div class="label">Sessions${activeLabel}</div></div>
     </div>
+
+    <div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+      <div class="stat">
+        <div class="num" style="font-size:20px">${fmtNum(totals.input_tokens)}</div>
+        <div class="label">Input tokens</div>
+      </div>
+      <div class="stat">
+        <div class="num" style="font-size:20px">${fmtNum(totals.output_tokens)}</div>
+        <div class="label">Output tokens</div>
+      </div>
+      <div class="stat">
+        <div class="num" style="font-size:20px;color:#f0a500">${fmtNum(totals.cache_write_tokens)}</div>
+        <div class="label">Cache writes</div>
+      </div>
+      <div class="stat">
+        <div class="num" style="font-size:20px;color:#5c9cf5">${fmtNum(totals.cache_read_tokens)}</div>
+        <div class="label">Cache reads <span title="Repeated context loaded from cache on session resume — not double-counted in cost" style="cursor:help;opacity:0.5">ⓘ</span></div>
+      </div>
+    </div>
+
     <div class="card">
-      <h3>Recent Sessions</h3>
+      <h3>Sessions${activeLabel}</h3>
       ${metrics.length === 0
-        ? '<div class="text-muted">No session metrics yet. Sessions are recorded after the first Claude invocation.</div>'
-        : `<table>
+        ? '<div class="text-muted">No sessions match the current filter.</div>'
+        : `<div style="overflow-x:auto"><table>
         <thead><tr>
           <th>Time</th><th>Type</th><th>Trigger</th><th>Duration</th>
-          <th>Input</th><th>Output</th><th>Cache Hits</th><th>Cost</th><th>Status</th>
+          <th title="New input tokens">Input</th>
+          <th>Output</th>
+          <th title="Cache creation tokens (billed at write rate)" style="color:#f0a500">Cache↑</th>
+          <th title="Cache read tokens (billed at read rate, loaded from prior turns)" style="color:#5c9cf5">Cache↓</th>
+          <th>Cost</th><th>Status</th>
         </tr></thead>
         <tbody>${rows}</tbody>
-      </table>`}
+      </table></div>`}
     </div>`;
 
   return c.html(layout("Analytics", html, "analytics"));

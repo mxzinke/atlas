@@ -217,7 +217,7 @@ conn.execute('''INSERT OR IGNORE INTO session_metrics
     int(usage.get('output_tokens') or 0),
     int(usage.get('cache_read_input_tokens') or 0),
     int(usage.get('cache_creation_input_tokens') or 0),
-    float(d.get('cost_usd') or 0),
+    float(d.get('total_cost_usd') or d.get('cost_usd') or 0),
     int(d.get('num_turns') or 0),
     0,
 ))
