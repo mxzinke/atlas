@@ -33,7 +33,7 @@ if [ -n "${ATLAS_TRIGGER:-}" ]; then
         -e "s|{{channel}}|${CHANNEL}|g" \
         -e "s|{{today}}|${TODAY}|g" \
         "$PRE_COMPACT"
-    echo "(Journal file: memory/${TODAY}.md)"
+    echo "(Journal file: memory/journal/${TODAY}.md)"
     echo "</system-notice>"
   fi
 
@@ -59,7 +59,7 @@ cat << EOF
 Manual compaction requested. Consolidate ALL important findings:
 
 1. Write lasting facts, decisions, and preferences to memory/MEMORY.md
-2. Write task results and context to memory/${TODAY}.md
+2. Write task results and context to memory/journal/${TODAY}.md
 3. If a project topic is relevant, create/update memory/projects/
 
 Be thorough — detailed context will be lost after compaction.

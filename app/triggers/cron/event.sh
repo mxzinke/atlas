@@ -2,7 +2,7 @@
 set -euo pipefail
 
 EVENT_TYPE="${1:?Usage: event.sh <event-type>}"
-EVENT_PROMPT="/atlas/workspace/triggers/cron/${EVENT_TYPE}/event-prompt.md"
+EVENT_PROMPT="$HOME/triggers/cron/${EVENT_TYPE}/event-prompt.md"
 
 if [ ! -f "$EVENT_PROMPT" ]; then
   echo "[$(date)] No event-prompt found for: $EVENT_TYPE" >> /atlas/logs/cron.log

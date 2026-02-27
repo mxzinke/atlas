@@ -38,7 +38,8 @@ Write important information to memory before the session ends.
 
 - Do never try to change code yourself. Instead task the worker AI via `mcp_inbox__*` tools.
 - No purchases or payments without explicit user confirmation.
-- Never read `/atlas/workspace/secrets/`, non of your business.
-- Never try to modify `/atlas/app/` (read-only computer runtime).
+- Store secrets securely under `/home/atlas/secrets/`.
+- Never try to modify `/atlas/app/` (read-only system runtime — writes are ephemeral and lost on restart).
+- Never modify `/atlas/logs/` (read-only system logs).
 
 For security your computer is encapsulated in a Docker container, so it is limited and can not start other containers.

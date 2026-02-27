@@ -16,7 +16,8 @@ app/
 │   ├── config.yml             # Default configuration
 │   ├── crontab                # Default cron entries
 │   ├── IDENTITY.md            # Default agent identity
-│   └── SOUL.md                # Default agent soul
+│   ├── SOUL.md                # Default agent soul
+│   └── skills/                # System skills (symlinked into .claude/skills/)
 ├── hooks/                      # Claude Code lifecycle hooks
 │   ├── session-start.sh       # Loads identity + memory on wake
 │   ├── stop.sh                # Checks inbox, continues or sleeps
@@ -44,47 +45,48 @@ app/
 └── init.sh                     # Container startup script
 ```
 
-## /atlas/workspace/ (Read-Write)
+## /home/atlas/ (Read-Write)
 
-Persistent workspace. Mounted as a Docker volume. Contains all user data.
+Persistent home directory. Mounted as a Docker volume (`./home:/home/atlas`). Contains all user data.
 
 ```
-workspace/
-├── inbox/                      # Inbox database and wake files
+home/
+├── .claude/                    # Claude Code configuration
+│   ├── settings.json          # Hooks config, MCP servers (written by generate-settings.ts)
+│   ├── skills/                # Merged skill directory (per-skill symlinks)
+│   │   └── <skill-name> →     # Symlinks to system or user skills
+│   └── agents/ →              # Symlink to ~/agents
+├── .index/                     # System state (was inbox/)
 │   ├── atlas.db               # SQLite database (WAL mode)
 │   ├── .wake                  # Wake signal file
 │   ├── .wake-*                # Trigger re-awakening files
 │   ├── .last-session-id       # Last main session ID
 │   ├── .session-running       # Session lock indicator
+│   ├── .session.flock         # flock file for main session concurrency
 │   ├── signal/                # Signal databases (per number)
 │   └── email/                 # Email databases (per account)
 ├── memory/                     # Long-term memory
 │   ├── MEMORY.md              # Persistent knowledge base
-│   ├── YYYY-MM-DD.md          # Daily journal entries
+│   ├── journal/               # Daily journal entries
+│   │   └── YYYY-MM-DD.md
 │   └── projects/              # Project-specific notes
+├── projects/                   # Working directories
+├── skills/                     # Atlas-created skills
+├── agents/                     # Atlas-created agents
 ├── triggers/                   # Custom trigger prompts (optional)
 │   └── cron/
 │       └── <trigger-name>/
 │           └── event-prompt.md
+├── mcps/                       # User-installed MCP servers
+├── secrets/                    # API keys, credentials (denylist)
+├── bin/                        # User scripts
+├── supervisor.d/               # Supervisord config overrides
+├── logs/                       # Runtime logs
 ├── IDENTITY.md                 # Agent personality
 ├── SOUL.md                     # Agent soul (core values)
 ├── config.yml                  # System configuration
 ├── crontab                     # Generated crontab
-├── user-extensions.sh          # Custom package installs
-└── secrets/                    # API keys, credentials (denylist)
-```
-
-## /root/ (Read-Write)
-
-Home directory. Mounted as a Docker volume for persistence.
-
-```
-root/
-├── .claude/                    # Claude Code configuration
-│   ├── settings.json          # Hooks config, MCP servers
-│   └── projects/              # Session history
-├── .claude.json               # Claude Code cached features
-└── .ssh/                      # SSH keys
+└── user-extensions.sh          # Custom package installs
 ```
 
 ## Key Files Reference
@@ -96,7 +98,8 @@ root/
 | `app/inbox-mcp/index.ts` | MCP server with inbox/trigger tools |
 | `app/watcher.sh` | inotifywait loop for wake events |
 | `app/web-ui/index.ts` | Hono.js dashboard server |
-| `workspace/inbox/atlas.db` | SQLite database (messages, triggers, sessions) |
-| `workspace/memory/MEMORY.md` | Long-term memory storage |
-| `workspace/IDENTITY.md` | Agent identity/personality |
-| `workspace/config.yml` | Runtime configuration |
+| `app/defaults/skills/` | System skills (symlinked into `.claude/skills/`) |
+| `/home/atlas/.index/atlas.db` | SQLite database (messages, triggers, sessions) |
+| `/home/atlas/memory/MEMORY.md` | Long-term memory storage |
+| `/home/atlas/IDENTITY.md` | Agent identity/personality |
+| `/home/atlas/config.yml` | Runtime configuration |

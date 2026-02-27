@@ -3,17 +3,16 @@ set -euo pipefail
 
 export PATH=/atlas/app/bin:/usr/local/bin:/usr/bin:/bin:$PATH
 
-SESSION_FILE=/atlas/workspace/.last-session-id
-WATCH_DIR=/atlas/workspace/inbox
-LOCK_FILE=/atlas/workspace/.session-running
-FLOCK_FILE=/atlas/workspace/.session.flock
+WORKSPACE="$HOME"
+SESSION_FILE=$WORKSPACE/.index/.last-session-id
+WATCH_DIR=$WORKSPACE/.index
+LOCK_FILE=$WORKSPACE/.index/.session-running
+FLOCK_FILE=$WORKSPACE/.index/.session.flock
 CLAUDE_JSON="$HOME/.claude.json"
 
 source /atlas/app/hooks/failure-handler.sh
 
 # Disable remote MCP connectors that hang on startup.
-# Claude Code caches the gate value from .claude.json; patching it
-# before each invocation prevents the remote MCP connection attempt.
 disable_remote_mcp() {
   [ -f "$CLAUDE_JSON" ] || return 0
   jq '.cachedGrowthBookFeatures.tengu_claudeai_mcp_connectors = false' \
@@ -71,7 +70,7 @@ Relay this result to the original sender now."
     fi
 
     echo "[$(date)] Trigger $TRIGGER_NAME re-awakening done" | tee -a "$LOG"
-  ) 200>"/atlas/workspace/.trigger-${TRIGGER_NAME}.flock" &
+  ) 200>"$WORKSPACE/.trigger-${TRIGGER_NAME}.flock" &
 }
 
 startup_recovery() {
@@ -83,7 +82,6 @@ startup_recovery() {
   done
 
   # Pass 2: re-create wake files for done tasks whose wake file was never written
-  # (covers the case where wakeTriggerIfAwaiting was interrupted before writeFileSync)
   [ -f "$DB" ] || return 0
   sqlite3 -json "$DB" \
     "SELECT ta.task_id, ta.trigger_name, ta.session_key,
@@ -123,7 +121,6 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' 
   if [ "$FILENAME" = ".wake" ]; then
     echo "[$(date)] Main session wake event"
 
-    # Atomic lock via flock: prevents concurrent sessions and auto-releases on crash/kill.
     (
       exec </dev/null >>/atlas/logs/watcher.log 2>&1
       flock -n 9 || { echo "[$(date)] Session already running, skipping"; exit 0; }

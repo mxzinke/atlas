@@ -2,8 +2,8 @@
 # Sourced by watcher.sh inside the main session flock subshell.
 # Provides: on_session_success, on_session_failure
 
-WORKSPACE=/atlas/workspace
-DB="$WORKSPACE/inbox/atlas.db"
+WORKSPACE="$HOME"
+DB="$WORKSPACE/.index/atlas.db"
 FAILURE_COUNT_FILE="$WORKSPACE/.failure-count"
 FAILURE_TS_FILE="$WORKSPACE/.failure-first-ts"
 NOTIFIED_FILE="$WORKSPACE/.failure-notified"
@@ -63,7 +63,6 @@ on_session_failure() {
   fi
 
   # Exponential backoff: initial * 2^(failures-1), capped at max
-  # Pure bash integer arithmetic, no bc/awk required
   local BACKOFF=$ATLAS_BACKOFF_INITIAL
   local i=1
   while [ "$i" -lt "$FAIL_COUNT" ]; do
@@ -75,11 +74,10 @@ on_session_failure() {
   echo "[$(date)] Backing off ${BACKOFF}s before retry (attempt $((FAIL_COUNT + 1)))"
 
   # Sleep in background so the caller's flock is released immediately.
-  # This prevents the backoff from blocking all incoming wake events.
   (
     sleep "$BACKOFF"
     reset_processing_tasks
-    touch "$WORKSPACE/inbox/.wake"
+    touch "$WORKSPACE/.index/.wake"
     echo "[$(date)] Retry triggered via .wake touch (after ${BACKOFF}s backoff)" >> /atlas/logs/watcher.log
   ) &
 }

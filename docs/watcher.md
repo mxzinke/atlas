@@ -18,10 +18,10 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib \
 
 ## .wake File Mechanism
 
-The main session is awakened by touching `.wake` in `/atlas/workspace/inbox/`:
+The main session is awakened by touching `.wake` in `/home/atlas/.index/`:
 
 ```bash
-touch /atlas/workspace/inbox/.wake
+touch /home/atlas/.index/.wake
 ```
 
 When the watcher detects `.wake`:

@@ -15,7 +15,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
 
-const DB_PATH = "/atlas/workspace/inbox/atlas.db";
+const DB_PATH = process.env.HOME + "/.index/atlas.db";
 
 function die(msg: string): never {
   console.error(`Error: ${msg}`);
@@ -113,7 +113,7 @@ switch (command) {
     }
 
     // Create trigger directory for prompt.md
-    mkdirSync(`/atlas/workspace/triggers/${name}`, { recursive: true });
+    mkdirSync(`${process.env.HOME}/triggers/${name}`, { recursive: true });
 
     if (type === "cron") syncCrontab();
 
@@ -123,7 +123,7 @@ switch (command) {
       console.log(`Webhook URL: /api/webhook/${name}`);
       if (secret) console.log(`Auth: Set X-Webhook-Secret: ${secret}`);
     }
-    console.log(`Prompt file: workspace/triggers/${name}/prompt.md`);
+    console.log(`Prompt file: ~/triggers/${name}/prompt.md`);
     console.log(JSON.stringify(trigger, null, 2));
     break;
   }

@@ -35,7 +35,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
   chmod +x /usr/local/bin/bun && \
   ln -sf /usr/local/bin/bun /usr/local/bin/bunx && \
   rm -rf /tmp/bun.zip /tmp/bun-extract
-ENV PATH="/atlas/app/bin:/atlas/workspace/bin:${PATH}"
+ENV PATH="/atlas/app/bin:/home/atlas/bin:${PATH}"
 ENV HOME=/home/atlas
 
 # Install supercronic (cron replacement)
@@ -66,15 +66,18 @@ RUN mkdir -p /atlas/app/hooks \
   /atlas/app/triggers/cron \
   /atlas/app/inbox-mcp \
   /atlas/app/web-ui \
-  /atlas/workspace/memory/projects \
-  /atlas/workspace/inbox \
-  /atlas/workspace/skills \
-  /atlas/workspace/agents \
-  /atlas/workspace/mcps \
-  /atlas/workspace/triggers \
-  /atlas/workspace/secrets \
-  /atlas/workspace/bin \
-  /atlas/workspace/.qmd-cache \
+  /atlas/app/defaults/skills \
+  /home/atlas/memory/projects \
+  /home/atlas/memory/journal \
+  /home/atlas/.index \
+  /home/atlas/projects \
+  /home/atlas/skills \
+  /home/atlas/agents \
+  /home/atlas/mcps \
+  /home/atlas/triggers \
+  /home/atlas/secrets \
+  /home/atlas/bin \
+  /home/atlas/.qmd-cache \
   /atlas/logs
 
 # Copy application code
@@ -111,7 +114,7 @@ RUN chown -R atlas:atlas /atlas /home/atlas \
   && chown -R atlas:atlas /var/run /var/log/nginx /var/lib/nginx \
   && chown -R atlas:atlas /etc/supervisor
 
-WORKDIR /atlas/workspace
+WORKDIR /home/atlas
 
 EXPOSE 8080
 

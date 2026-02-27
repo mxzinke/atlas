@@ -40,14 +40,14 @@ from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
 
 # --- Paths ---
-CONFIG_PATH = "/atlas/workspace/config.yml"
-ATLAS_DB_PATH = "/atlas/workspace/inbox/atlas.db"
-EMAIL_DB_DIR = "/atlas/workspace/inbox/email"
-WAKE_PATH = "/atlas/workspace/inbox/.wake"
+CONFIG_PATH = os.environ["HOME"] + "/config.yml"
+ATLAS_DB_PATH = os.environ["HOME"] + "/.index/atlas.db"
+EMAIL_DB_DIR = os.environ["HOME"] + "/.index/email"
+WAKE_PATH = os.environ["HOME"] + "/.index/.wake"
 TRIGGER_SCRIPT = "/atlas/app/triggers/trigger.sh"
 TRIGGER_NAME = "email-handler"
-ATTACHMENTS_DIR = "/atlas/workspace/inbox/email/attachments"
-MESSAGES_DIR = "/atlas/workspace/inbox/email/messages"
+ATTACHMENTS_DIR = os.environ["HOME"] + "/.index/email/attachments"
+MESSAGES_DIR = os.environ["HOME"] + "/.index/email/messages"
 
 
 # --- Config ---

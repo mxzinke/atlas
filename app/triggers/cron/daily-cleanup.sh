@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-SESSION_FILE=/atlas/workspace/.last-session-id
-CLEANUP_DONE=/atlas/workspace/.cleanup-done
-DB=/atlas/workspace/inbox/atlas.db
+SESSION_FILE=$HOME/.index/.last-session-id
+CLEANUP_DONE=$HOME/.cleanup-done
+DB=$HOME/.index/atlas.db
 
 # Prune old data (30 days)
 if [ -f "$DB" ]; then

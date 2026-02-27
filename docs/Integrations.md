@@ -78,7 +78,7 @@ The Signal Add-on provides the `signal` CLI tool (wrapper for `app/integrations/
 ### Prerequisites
 
 ```bash
-# In workspace/user-extensions.sh:
+# In ~/user-extensions.sh:
 apt-get install -y signal-cli
 
 # Register your number (one-time, interactive):
@@ -88,7 +88,7 @@ signal-cli -a +491701234567 verify 123-456
 
 ### Setup
 
-**1. Configure** `workspace/config.yml`:
+**1. Configure** `~/config.yml`:
 
 ```yaml
 signal:
@@ -146,7 +146,7 @@ signal incoming +491701234567 "Hello!" --name "Alice"
 
 ### Signal Database
 
-Each configured number gets its own SQLite database at `workspace/inbox/signal/<number>.db` with WAL mode:
+Each configured number gets its own SQLite database at `~/.index/signal/<number>.db` with WAL mode:
 
 | Table | Purpose |
 |-------|---------|
@@ -167,7 +167,7 @@ Python3 with `imaplib` (built-in) and `pyyaml`.
 
 ### Setup
 
-**1. Configure** `workspace/config.yml`:
+**1. Configure** `~/config.yml`:
 
 ```yaml
 email:
@@ -176,7 +176,7 @@ email:
   smtp_host: "smtp.gmail.com"
   smtp_port: 587
   username: "atlas@example.com"
-  password_file: "/atlas/workspace/secrets/email-password"
+  password_file: "/home/atlas/secrets/email-password"
   folder: "INBOX"
   whitelist: ["alice@example.com", "example.org"]   # or empty
   mark_read: true
@@ -185,8 +185,8 @@ email:
 **2. Store password**:
 
 ```bash
-echo "your-app-password" > /atlas/workspace/secrets/email-password
-chmod 600 /atlas/workspace/secrets/email-password
+echo "your-app-password" > /home/atlas/secrets/email-password
+chmod 600 /home/atlas/secrets/email-password
 ```
 
 For Gmail: use an [App Password](https://myaccount.google.com/apppasswords), not your main password.
@@ -212,11 +212,25 @@ trigger_create:
 **4. Start polling**:
 
 ```bash
-# Continuous (supervisord):
-python3 /atlas/app/integrations/email/email-addon.py poll
+# Continuous (supervisord) — write to /atlas/workspace/supervisor.d/email-poller.conf:
+[program:email-poller]
+command=python3 -u /atlas/app/integrations/email/email-addon.py poll
+autostart=true
+autorestart=true
+stdout_logfile=/atlas/logs/email-poller.log
+stderr_logfile=/atlas/logs/email-poller-error.log
+environment=PYTHONUNBUFFERED=1
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=3
+stderr_logfile_maxbytes=1MB
+stderr_logfile_backups=1
+
+# Important: use python3 -u and PYTHONUNBUFFERED=1 to disable stdout buffering.
+# Without this, Python buffers ~8KB before writing to the log file, so logs go
+# missing entirely if the process is restarted before the buffer flushes.
 
 # Cron (every 2 minutes):
-*/2 * * * *  python3 /atlas/app/integrations/email/email-addon.py poll --once
+*/2 * * * *  python3 -u /atlas/app/integrations/email/email-addon.py poll --once
 ```
 
 ### CLI Usage
@@ -241,7 +255,7 @@ email poll                       # continuous mode
 
 ### Email Database
 
-Each configured account gets its own SQLite database at `workspace/inbox/email/<username>.db` with WAL mode:
+Each configured account gets its own SQLite database at `~/.index/email/<username>.db` with WAL mode:
 
 | Table | Purpose |
 |-------|---------|
@@ -299,14 +313,14 @@ Trigger sessions reply directly via CLI tools — no intermediate delivery layer
 ### Enable Signal in 2 Steps
 
 ```bash
-# 1. Install signal-cli + configure workspace/config.yml (signal section)
+# 1. Install signal-cli + configure ~/config.yml (signal section)
 # 2. Create trigger: "Create a persistent Signal chat trigger" + start polling
 ```
 
 ### Enable Email in 2 Steps
 
 ```bash
-# 1. Configure workspace/config.yml (email section) + store password
+# 1. Configure ~/config.yml (email section) + store password
 # 2. Create trigger: "Create a persistent email handler trigger" + start polling
 ```
 

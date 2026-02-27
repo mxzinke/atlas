@@ -1,12 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+WORKSPACE="$HOME"
 LOG="/atlas/logs/init.log"
 exec > >(tee -a "$LOG") 2>&1
 
 echo "[$(date)] Atlas init starting..."
-
-WORKSPACE=/atlas/workspace
 
 # ── Phase 1: Auth Check ──
 echo "[$(date)] Phase 1: Auth check"
@@ -16,7 +15,7 @@ elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "  API key configured"
 else
   echo "  ⚠ No authentication configured!"
-  echo "  Run: docker run -it --rm -v \$(pwd)/atlas-home:/home/atlas atlas claude login"
+  echo "  Run: docker run -it --rm -v \$(pwd)/volume:/home/atlas atlas claude login"
   echo "  Or set ANTHROPIC_API_KEY in docker-compose.yml"
   # Don't exit - web-ui should still start for setup instructions
 fi
@@ -24,7 +23,9 @@ fi
 # ── Phase 2: Directory Setup ──
 echo "[$(date)] Phase 2: Directory setup"
 mkdir -p "$WORKSPACE/memory/projects" \
-         "$WORKSPACE/inbox/replies" \
+         "$WORKSPACE/memory/journal" \
+         "$WORKSPACE/.index" \
+         "$WORKSPACE/projects" \
          "$WORKSPACE/skills" \
          "$WORKSPACE/agents" \
          "$WORKSPACE/mcps" \
@@ -32,8 +33,7 @@ mkdir -p "$WORKSPACE/memory/projects" \
          "$WORKSPACE/secrets" \
          "$WORKSPACE/bin" \
          "$WORKSPACE/supervisor.d" \
-         "$WORKSPACE/.qmd-cache" \
-         /atlas/logs
+         "$WORKSPACE/.qmd-cache"
 
 # ── Phase 3: Default Config ──
 echo "[$(date)] Phase 3: Default config"
@@ -49,8 +49,8 @@ if [ ! -f "$WORKSPACE/crontab" ]; then
   echo "  Created default crontab"
 fi
 
-# ── Phase 5: First-Run Check ──
-echo "[$(date)] Phase 5: First-run check"
+# ── Phase 5: First-Run Check + Migrations ──
+echo "[$(date)] Phase 5: First-run check + migrations"
 FIRST_RUN=false
 
 if [ ! -f "$WORKSPACE/IDENTITY.md" ]; then
@@ -68,8 +68,7 @@ if [ ! -f "$WORKSPACE/SOUL.md" ]; then
   echo "  Created default SOUL.md"
 fi
 
-# Default skills (Claude Code convention: <name>/SKILL.md)
-# Migrate old flat files → directory structure
+# Migrate old flat skill files → directory structure
 for old_skill in "$WORKSPACE"/skills/*.md; do
   [ -f "$old_skill" ] || continue
   OLD_NAME=$(basename "$old_skill" .md)
@@ -79,19 +78,33 @@ for old_skill in "$WORKSPACE"/skills/*.md; do
   fi
 done
 
-# Always refresh system skills from defaults (single source of truth)
-for skill_dir in /atlas/app/defaults/skills/*/; do
-  [ -d "$skill_dir" ] || continue
-  SKILL_NAME=$(basename "$skill_dir")
-  DEST="$WORKSPACE/skills/$SKILL_NAME"
-  rm -rf "$DEST"
-  cp -r "$skill_dir" "$DEST"
-  echo "  Refreshed skill: $SKILL_NAME"
+# Remove stale system skill copies (now linked from app)
+for skill_name in dependencies playwright triggers; do
+  [ -d "$WORKSPACE/skills/$skill_name" ] && rm -rf "$WORKSPACE/skills/$skill_name" \
+    && echo "  Cleaned up stale system skill: $skill_name"
 done
+
+# Migrate journal files to journal/ subdir
+for f in "$WORKSPACE/memory/"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md; do
+  [ -f "$f" ] || continue
+  mv "$f" "$WORKSPACE/memory/journal/$(basename $f)"
+  echo "  Migrated journal: $(basename $f)"
+done
+
+# Migrate inbox/ → .index/
+if [ -d "$WORKSPACE/inbox" ] && [ ! -d "$WORKSPACE/.index" ]; then
+  mv "$WORKSPACE/inbox" "$WORKSPACE/.index"
+  echo "  Migrated inbox/ → .index/"
+elif [ -d "$WORKSPACE/inbox" ] && [ -d "$WORKSPACE/.index" ]; then
+  # Merge: copy anything not already in .index
+  cp -rn "$WORKSPACE/inbox/." "$WORKSPACE/.index/" 2>/dev/null || true
+  rm -rf "$WORKSPACE/inbox"
+  echo "  Merged inbox/ → .index/ (both existed)"
+fi
 
 # ── Phase 6: Initialize SQLite DB ──
 echo "[$(date)] Phase 6: Database init"
-DB="$WORKSPACE/inbox/atlas.db"
+DB="$WORKSPACE/.index/atlas.db"
 FIRST_DB=false
 if [ ! -f "$DB" ]; then
   FIRST_DB=true
@@ -115,8 +128,7 @@ fi
 sqlite3 "$DB" "INSERT OR IGNORE INTO triggers (name, type, description, channel, prompt, session_mode) VALUES (
   'web-chat', 'manual', 'Web UI chat message handler', 'web', '', 'persistent');" || echo "  ⚠ web-chat trigger insert failed (non-fatal)"
 
-# Create web-chat spawn prompt (used when session is not running and must be started/resumed)
-# The {{payload}} placeholder is substituted with the JSON message by trigger.sh
+# Create web-chat spawn prompt
 mkdir -p "$WORKSPACE/triggers/web-chat"
 if [ ! -f "$WORKSPACE/triggers/web-chat/prompt.md" ]; then
   cat > "$WORKSPACE/triggers/web-chat/prompt.md" << 'WCPROMPT'
@@ -150,24 +162,33 @@ EXTENSIONS
   echo "  Created user-extensions.sh template"
 fi
 
-# ── Phase 8: Claude Code Settings ──
+# ── Phase 8: Claude Code Settings + Discovery Links ──
 # Regenerated on every start to pick up model changes from config.yml
-echo "[$(date)] Phase 8: Claude Code settings (from config.yml)"
+echo "[$(date)] Phase 8: Claude Code settings + discovery links"
 bun run /atlas/app/hooks/generate-settings.ts || echo "  ⚠ Settings generation failed (non-fatal)"
 
-# Symlink MCP config so Claude Code discovers servers in the workspace
-ln -sf /atlas/app/.mcp.json "$WORKSPACE/.mcp.json"
-echo "  MCP config symlinked: $WORKSPACE/.mcp.json -> /atlas/app/.mcp.json"
+# .mcp.json discovery (Claude Code looks for this in CWD = $HOME)
+ln -sf /atlas/app/.mcp.json "$HOME/.mcp.json"
+echo "  MCP config symlinked: $HOME/.mcp.json -> /atlas/app/.mcp.json"
 
-# Symlink Claude Code settings (hooks, env, permissions) into workspace project dir
-mkdir -p "$WORKSPACE/.claude"
-ln -sf /atlas/app/.claude/settings.json "$WORKSPACE/.claude/settings.json"
-echo "  Settings symlinked: $WORKSPACE/.claude/settings.json -> /atlas/app/.claude/settings.json"
-ln -sf "$WORKSPACE/skills" "$WORKSPACE/.claude/skills"
-echo "  Skills symlinked: $WORKSPACE/.claude/skills -> $WORKSPACE/skills"
+# Skills: merged real directory with per-skill symlinks
+# System skills (from image) + Atlas-created skills (from home/skills/)
+rm -rf "$HOME/.claude/skills"
+mkdir -p "$HOME/.claude/skills"
+for d in /atlas/app/defaults/skills/*/; do
+  [ -d "$d" ] && ln -sfn "$d" "$HOME/.claude/skills/$(basename $d)"
+done
+for d in "$HOME/skills/"*/; do
+  [ -d "$d" ] && ln -sfn "$d" "$HOME/.claude/skills/$(basename $d)"
+done
+echo "  Skills discovery dir rebuilt: $HOME/.claude/skills/"
+
+# Agents: simple symlink to atlas-created agents dir
+rm -f "$HOME/.claude/agents"
+ln -sfn "$HOME/agents" "$HOME/.claude/agents"
+echo "  Agents symlinked: $HOME/.claude/agents -> $HOME/agents"
 
 # Disable remote MCP connectors (claudeai-mcp) that cause session hangs.
-# Claude Code caches the gate value from .claude.json on startup.
 if [ -f "$HOME/.claude.json" ] && command -v jq &>/dev/null; then
   jq '.cachedGrowthBookFeatures.tengu_claudeai_mcp_connectors = false' \
     "$HOME/.claude.json" > "$HOME/.claude.json.tmp" && mv "$HOME/.claude.json.tmp" "$HOME/.claude.json"

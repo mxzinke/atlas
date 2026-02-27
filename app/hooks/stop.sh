@@ -2,9 +2,9 @@
 # Stop Hook: Inbox check + sleep orchestration
 set -euo pipefail
 
-WORKSPACE=/atlas/workspace
-DB="$WORKSPACE/inbox/atlas.db"
-SESSION_FILE="$WORKSPACE/.last-session-id"
+WORKSPACE="$HOME"
+DB="$WORKSPACE/.index/atlas.db"
+SESSION_FILE="$WORKSPACE/.index/.last-session-id"
 CLEANUP_DONE="$WORKSPACE/.cleanup-done"
 
 # Daily cleanup mode - just signal done and exit
@@ -81,5 +81,5 @@ if [ -f "$DB" ]; then
 fi
 
 # No pending or active tasks — sleep
-echo "No pending tasks. Write a short journal entry to memory/$(date +%Y-%m-%d).md if you accomplished something relevant today."
+echo "No pending tasks. Write a short journal entry to memory/journal/$(date +%Y-%m-%d).md if you accomplished something relevant today."
 exit 0

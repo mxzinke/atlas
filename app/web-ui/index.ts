@@ -14,13 +14,13 @@ import { homedir } from "os";
 import { getDb } from "../inbox-mcp/db";
 
 // --- Config ---
-const WS = "/atlas/workspace";
+const WS = process.env.HOME!;
 const MEMORY = `${WS}/memory`;
 const IDENTITY = `${WS}/IDENTITY.md`;
 const CONFIG = `${WS}/config.yml`;
 const EXTENSIONS = `${WS}/user-extensions.sh`;
-const LOCK = `${WS}/.session-running`;
-const WAKE = `${WS}/inbox/.wake`;
+const LOCK = `${WS}/.index/.session-running`;
+const WAKE = `${WS}/.index/.wake`;
 
 function syncCrontab(): void {
   try {

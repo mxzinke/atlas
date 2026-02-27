@@ -24,8 +24,8 @@
 
 ---
 
-**Notice**: This is the first session. Interview the user to fill in the sections above. After collecting all answers, rewrite this file at `/atlas/workspace/IDENTITY.md` with the completed identity information.
+**Notice**: This is the first session. Interview the user to fill in the sections above. After collecting all answers, rewrite this file at `/home/atlas/IDENTITY.md` with the completed identity information.
 
 <system_notice>
-Identity information about the user should be editted later on, in case you get to know the human even more, see `/atlas/workspace/IDENTITY.md`.
-</system_notice>>
+Identity information about the user should be editted later on, in case you get to know the human even more, see `/home/atlas/IDENTITY.md`.
+</system_notice>

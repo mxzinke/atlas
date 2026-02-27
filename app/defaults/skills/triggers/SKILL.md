@@ -60,7 +60,7 @@ trigger create \
   --channel=internal
 ```
 
-Then create the prompt file at `workspace/triggers/daily-report/prompt.md`.
+Then create the prompt file at `~/triggers/daily-report/prompt.md`.
 
 After creation, the crontab is synced automatically — supercronic picks it up. **Nothing else needed.**
 
@@ -74,7 +74,7 @@ trigger create \
   --description="Post-deploy notification"
 ```
 
-Prompt file: `workspace/triggers/deploy-hook/prompt.md`
+Prompt file: `~/triggers/deploy-hook/prompt.md`
 Use `{{payload}}` in prompt for the webhook body.
 
 The endpoint `http://<host>:8080/api/webhook/deploy-hook` is live immediately. External services POST to this URL with the optional `X-Webhook-Secret` header.
@@ -94,12 +94,12 @@ Fired via the web-ui dashboard "Run" button.
 
 Each trigger's prompt lives at:
 ```
-workspace/triggers/<name>/prompt.md
+~/triggers/<name>/prompt.md
 ```
 
 The `trigger create` command creates the directory automatically. Write the full trigger instruction in this file. If the `prompt` field in DB is empty (default after CLI create), this file is used automatically.
 
-Example `workspace/triggers/daily-report/prompt.md`:
+Example `~/triggers/daily-report/prompt.md`:
 ```
 Check the inbox for any unread messages and summarize activity from the past 24 hours.
 Escalate anything urgent to the main session via task_create.
@@ -109,9 +109,9 @@ Escalate anything urgent to the main session via task_create.
 
 Some integrations need a persistent background process instead of a cron job — for example, a messaging listener that reacts instantly rather than polling every minute.
 
-Atlas supports this via `workspace/supervisor.d/`. Any `.conf` file placed there is picked up by supervisord. Services can be added or removed without rebuilding the container.
+Atlas supports this via `~/supervisor.d/`. Any `.conf` file placed there is picked up by supervisord. Services can be added or removed without rebuilding the container.
 
-**Add a service** — create `workspace/supervisor.d/myservice.conf`:
+**Add a service** — create `~/supervisor.d/myservice.conf`:
 ```ini
 [program:myservice]
 command=/path/to/command --args
@@ -183,7 +183,7 @@ trigger create \
   --description="Signal messenger conversations"
 ```
 
-Write `workspace/triggers/signal-chat/prompt.md`:
+Write `~/triggers/signal-chat/prompt.md`:
 ```
 <message from="{{sender}}">
 {{payload}}
@@ -194,7 +194,7 @@ Please respond directly using `signal send "{{sender}}" "..."`.
 
 **Step 3: Add supervisor services**
 
-Create `workspace/supervisor.d/signal.conf` (replace number with your own):
+Create `~/supervisor.d/signal.conf` (replace number with your own):
 ```ini
 [program:signal-daemon]
 command=signal-cli -a +491701234567 daemon --socket /tmp/signal.sock
@@ -241,7 +241,7 @@ email:
   smtp_host: "smtp.gmail.com"
   smtp_port: 587
   username: "atlas@example.com"
-  password_file: "/atlas/workspace/secrets/email-password"
+  password_file: "/home/atlas/secrets/email-password"
   folder: "INBOX"
   whitelist: []   # empty = accept all; or ["alice@example.com", "example.org"]
   mark_read: true
@@ -250,8 +250,8 @@ email:
 **Step 2: Store password**
 
 ```bash
-echo "your-app-password" > /atlas/workspace/secrets/email-password
-chmod 600 /atlas/workspace/secrets/email-password
+echo "your-app-password" > /home/atlas/secrets/email-password
+chmod 600 /home/atlas/secrets/email-password
 ```
 
 For Gmail: use an App Password, not your main password.
@@ -267,7 +267,7 @@ trigger create \
   --description="Email conversations (IMAP)"
 ```
 
-Then write `workspace/triggers/email-handler/prompt.md`:
+Then write `~/triggers/email-handler/prompt.md`:
 ```
 New email received:
 
@@ -318,7 +318,7 @@ email thread <thread_id>
 
 ## Crontab Structure
 
-The crontab at `/atlas/workspace/crontab` has two sections:
+The crontab at `~/crontab` has two sections:
 
 - **Static** (above `# === AUTO-GENERATED TRIGGERS`): Manual cron entries (e.g. email polling)
 - **Dynamic** (below the marker): Auto-generated from enabled cron triggers

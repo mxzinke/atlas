@@ -6,8 +6,9 @@
  */
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
-const CONFIG_PATH = "/atlas/workspace/config.yml";
-const SETTINGS_PATH = "/atlas/app/.claude/settings.json";
+const HOME = process.env.HOME!;
+const CONFIG_PATH = HOME + "/config.yml";
+const SETTINGS_PATH = HOME + "/.claude/settings.json";
 
 // Defaults if config.yml is missing or incomplete
 const DEFAULT_MODELS = {
@@ -25,21 +26,17 @@ const DEFAULT_FAILURE = {
 
 /**
  * Minimal YAML parser for the flat models section.
- * Extracts `models.key: value` from lines like:
- *   main: claude-sonnet-4-6  # comment
  */
 function parseModelsFromYaml(raw: string): Record<string, string> {
   const result: Record<string, string> = {};
   let inModels = false;
   for (const line of raw.split("\n")) {
     const trimmed = line.trimEnd();
-    // Top-level key (no indent)
     if (/^\S/.test(trimmed)) {
       inModels = trimmed.startsWith("models:");
       continue;
     }
     if (!inModels) continue;
-    // Indented key: value under models
     const m = trimmed.match(/^\s+(\w+):\s*(.+?)(?:\s+#.*)?$/);
     if (m) result[m[1]] = m[2];
   }
@@ -48,7 +45,6 @@ function parseModelsFromYaml(raw: string): Record<string, string> {
 
 /**
  * Minimal YAML parser for the failure_handling section.
- * Handles empty values (notification_command: "").
  */
 function parseFailureHandlingFromYaml(raw: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -91,7 +87,7 @@ const failureEnvContent = [
   `ATLAS_NOTIFY_COMMAND=${JSON.stringify(failure.notification_command)}`,
   "",
 ].join("\n");
-writeFileSync("/atlas/workspace/.failure-env", failureEnvContent);
+writeFileSync(HOME + "/.failure-env", failureEnvContent);
 
 const subagentStopPrompt = [
   "A team member has completed their task. Review the result in $ARGUMENTS.",
@@ -121,6 +117,12 @@ const settings: Record<string, unknown> = {
       "WebFetch",
       "WebSearch",
       "mcp__*",
+    ],
+    deny: [
+      "Write(/atlas/app/**)",
+      "Edit(/atlas/app/**)",
+      "Write(/atlas/logs/**)",
+      "Edit(/atlas/logs/**)",
     ],
   },
   hooks: {
@@ -166,7 +168,7 @@ const settings: Record<string, unknown> = {
   },
 };
 
-mkdirSync("/atlas/app/.claude", { recursive: true });
+mkdirSync(HOME + "/.claude", { recursive: true });
 writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 
 console.log(`Settings generated: main=${models.main}, subagent_review=${models.subagent_review}, hooks=${models.hooks}`);

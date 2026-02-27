@@ -31,7 +31,7 @@ if [ -n "${ATLAS_TRIGGER:-}" ]; then
         -e "s|{{channel}}|${CHANNEL}|g" \
         -e "s|{{today}}|${TODAY}|g" \
         "$PRE_COMPACT"
-    echo "(Journal file: memory/${TODAY}.md)"
+    echo "(Journal file: memory/journal/${TODAY}.md)"
     echo "</system-notice>"
   fi
 
@@ -57,7 +57,7 @@ cat << EOF
 Context is about to be compressed. Consolidate important findings:
 
 1. Write lasting facts, decisions, and preferences to memory/MEMORY.md
-2. Write task results and daily context to memory/${TODAY}.md
+2. Write task results and daily context to memory/journal/${TODAY}.md
 3. If a project topic is relevant, create/update a file in memory/projects/
 
 MEMORY.md is for long-term, timeless information. The journal is for daily details (append-only).

@@ -15,8 +15,8 @@
 set -euo pipefail
 
 TRIGGER_NAME="${1:?Usage: trigger.sh <trigger-name> [payload] [session-key]}"
-DB="/atlas/workspace/inbox/atlas.db"
-WORKSPACE="/atlas/workspace"
+DB="$HOME/.index/atlas.db"
+WORKSPACE="$HOME"
 PROMPT_DIR="/atlas/app/prompts"
 LOG="/atlas/logs/trigger-${TRIGGER_NAME}.log"
 CLAUDE_JSON="$HOME/.claude.json"

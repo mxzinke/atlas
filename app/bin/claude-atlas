@@ -3,7 +3,7 @@
 set -euo pipefail
 
 APP_DIR="/atlas/app"
-WORKSPACE="/atlas/workspace"
+WORKSPACE="$HOME"
 
 # Parse arguments
 MODE=""  # "worker" or "trigger"

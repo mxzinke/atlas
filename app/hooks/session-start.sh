@@ -2,12 +2,12 @@
 # SessionStart Hook: Loads identity + memory into Claude's context
 set -euo pipefail
 
-WORKSPACE=/atlas/workspace
+WORKSPACE="$HOME"
 IDENTITY="$WORKSPACE/IDENTITY.md"
 SOUL="$WORKSPACE/SOUL.md"
 MEMORY="$WORKSPACE/memory/MEMORY.md"
 MEMORY_DIR="$WORKSPACE/memory"
-DB="$WORKSPACE/inbox/atlas.db"
+DB="$WORKSPACE/.index/atlas.db"
 
 # Helper: emit file content wrapped in XML tag
 emit_section() {
@@ -24,8 +24,8 @@ emit_section() {
 emit_section "$MEMORY" "long-term-memory"
 
 # Show recent journal entries (titles only)
-if [ -d "$MEMORY_DIR" ]; then
-  JOURNALS=$(ls -1 "$MEMORY_DIR"/*.md 2>/dev/null | grep -E '/[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort -r | head -7)
+if [ -d "$MEMORY_DIR/journal" ]; then
+  JOURNALS=$(ls -1 "$MEMORY_DIR/journal/"*.md 2>/dev/null | grep -E '/[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort -r | head -7)
   if [ -n "$JOURNALS" ]; then
     echo "<recent-journals>"
     for j in $JOURNALS; do

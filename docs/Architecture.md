@@ -77,8 +77,7 @@ See [Triggers.md](Triggers.md) for details.
 | Location | Access | Contents |
 |----------|--------|----------|
 | `/atlas/app/` | Read-only | Core code, hooks, MCP server |
-| `/atlas/workspace/` | Read-write | Memory, inbox, config, identity |
-| `/root/` | Read-write | Claude config, SSH keys |
+| `/home/atlas/` | Read-write | Memory, system state, config, identity, skills |
 
 See [directory-structure.md](directory-structure.md) for details.
 

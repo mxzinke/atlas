@@ -66,10 +66,11 @@ function wakeTriggerIfAwaiting(taskId: number, responseSummary: string): void {
     response_summary: responseSummary,
   });
 
-  mkdirSync("/atlas/workspace/inbox", { recursive: true });
+  const indexDir = process.env.HOME + "/.index";
+  mkdirSync(indexDir, { recursive: true });
   try {
     writeFileSync(
-      `/atlas/workspace/inbox/.wake-${awaiter.trigger_name}-${taskId}`,
+      `${indexDir}/.wake-${awaiter.trigger_name}-${taskId}`,
       wakeData,
     );
   } catch (e) {
@@ -118,8 +119,9 @@ if (IS_TRIGGER) {
       ).run(taskId, ATLAS_TRIGGER, ATLAS_TRIGGER_SESSION_KEY);
 
       // Touch wake file to wake the worker session
-      mkdirSync("/atlas/workspace/inbox", { recursive: true });
-      touchFile("/atlas/workspace/inbox/.wake");
+      const indexDir2 = process.env.HOME + "/.index";
+      mkdirSync(indexDir2, { recursive: true });
+      touchFile(indexDir2 + "/.wake");
 
       return ok(task);
     },

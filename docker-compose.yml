@@ -6,8 +6,7 @@ services:
     container_name: atlas
     restart: unless-stopped
     volumes:
-      - ./atlas-home:/home/atlas
-      - ./workspace:/atlas/workspace
+      - ./volume:/home/atlas
       - ./logs:/atlas/logs
     environment:
       - TZ=Europe/Berlin

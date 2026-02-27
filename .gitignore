@@ -1,6 +1,5 @@
 # Host volumes (not in repo)
-atlas-home/
-workspace/
+volume/
 logs/
 
 # Temporary folder

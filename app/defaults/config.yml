@@ -27,7 +27,7 @@ email:
   smtp_host: "" # e.g. "smtp.gmail.com"
   smtp_port: 587
   username: "" # e.g. "atlas@example.com"
-  password_file: "/atlas/workspace/secrets/email-password"
+  password_file: "/home/atlas/secrets/email-password"
   folder: "INBOX"
   whitelist: [] # Empty = accept all, or list of senders/domains/wildcards (e.g. "*@*.example.com")
   mark_read: true # Mark fetched emails as read on server

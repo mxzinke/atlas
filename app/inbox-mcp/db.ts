@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
 
-const DB_PATH = "/atlas/workspace/inbox/atlas.db";
+const DB_PATH = process.env.HOME + "/.index/atlas.db";
 
 let db: Database | null = null;
 
@@ -327,7 +327,7 @@ function migrateSchema(database: Database): void {
 }
 
 export function initDb(): Database {
-  mkdirSync("/atlas/workspace/inbox", { recursive: true });
+  mkdirSync(process.env.HOME + "/.index", { recursive: true });
   const database = new Database(DB_PATH, { create: true });
   database.exec("PRAGMA journal_mode = WAL");
   database.exec("PRAGMA foreign_keys = ON");

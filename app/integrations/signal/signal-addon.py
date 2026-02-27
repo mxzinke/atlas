@@ -26,10 +26,10 @@ from datetime import datetime
 from pathlib import Path
 
 # --- Paths ---
-CONFIG_PATH = "/atlas/workspace/config.yml"
-ATLAS_DB_PATH = "/atlas/workspace/inbox/atlas.db"
-SIGNAL_DB_DIR = "/atlas/workspace/inbox/signal"
-WAKE_PATH = "/atlas/workspace/inbox/.wake"
+CONFIG_PATH = os.environ["HOME"] + "/config.yml"
+ATLAS_DB_PATH = os.environ["HOME"] + "/.index/atlas.db"
+SIGNAL_DB_DIR = os.environ["HOME"] + "/.index/signal"
+WAKE_PATH = os.environ["HOME"] + "/.index/.wake"
 TRIGGER_SCRIPT = "/atlas/app/triggers/trigger.sh"
 TRIGGER_NAME = "signal-chat"
 DAEMON_SOCKET = "/tmp/signal.sock"
@@ -39,7 +39,7 @@ def _find_signal_cli_bin():
     import shutil
     if shutil.which("signal-cli"):
         return "signal-cli"
-    for p in ["/atlas/workspace/bin/signal-cli-bin", "/atlas/workspace/bin/signal-cli"]:
+    for p in [os.environ["HOME"] + "/bin/signal-cli-bin", os.environ["HOME"] + "/bin/signal-cli"]:
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return None
