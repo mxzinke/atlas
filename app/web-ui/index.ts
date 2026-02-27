@@ -90,6 +90,7 @@ function layout(
     ["/inbox", "Inbox", "inbox"],
     ["/tasks", "Tasks", "tasks"],
     ["/triggers", "Triggers", "triggers"],
+    ["/analytics", "Analytics", "analytics"],
     ["/memory", "Memory", "memory"],
     ["/journal", "Journal", "journal"],
     ["/chat", "Chat", "chat"],
@@ -1201,6 +1202,91 @@ app.post("/settings/extensions", async (c) => {
   mkdirSync(WS, { recursive: true });
   writeFileSync(EXTENSIONS, content);
   return c.redirect("/settings?saved=extensions");
+});
+
+// --- Analytics ---
+app.get("/analytics", (c) => {
+  let metrics: any[] = [];
+  let totals: any = { total_cost: 0, total_tokens: 0, total_sessions: 0 };
+  let week: any = { week_cost: 0 };
+  try {
+    metrics = db.prepare(
+      `SELECT * FROM session_metrics ORDER BY created_at DESC LIMIT 100`
+    ).all() as any[];
+    totals = db.prepare(`
+      SELECT
+        SUM(cost_usd) as total_cost,
+        SUM(input_tokens + output_tokens) as total_tokens,
+        COUNT(*) as total_sessions
+      FROM session_metrics
+    `).get() as any || totals;
+    week = db.prepare(`
+      SELECT SUM(cost_usd) as week_cost
+      FROM session_metrics
+      WHERE created_at >= datetime('now', '-7 days')
+    `).get() as any || week;
+  } catch {}
+
+  function fmtCost(v: number | null): string {
+    return v != null ? `$${(v).toFixed(4)}` : "$0.0000";
+  }
+  function fmtNum(v: number | null): string {
+    if (!v) return "0";
+    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+    if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+    return String(v);
+  }
+  function fmtDuration(ms: number): string {
+    if (!ms) return "—";
+    if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+    const m = Math.floor(ms / 60_000);
+    const s = Math.floor((ms % 60_000) / 1000);
+    return `${m}m ${s}s`;
+  }
+  function typeBadge(t: string): string {
+    const colors: Record<string, string> = {
+      worker: "#5c9cf5",
+      trigger: "#7c6ef0",
+      "trigger-relay": "#ff9800",
+    };
+    return `<span class="badge" style="background:${colors[t] || "#3a3b55"};color:#fff">${safe(t)}</span>`;
+  }
+
+  const rows = metrics.map((m) => `
+    <tr>
+      <td class="text-muted">${safe(timeAgo(m.created_at))}</td>
+      <td>${typeBadge(m.session_type)}</td>
+      <td>${m.trigger_name ? safe(m.trigger_name) : '<span class="text-muted">—</span>'}</td>
+      <td>${fmtDuration(m.duration_ms)}</td>
+      <td>${fmtNum(m.input_tokens)}</td>
+      <td>${fmtNum(m.output_tokens)}</td>
+      <td>${fmtNum(m.cache_read_tokens)}</td>
+      <td>${fmtCost(m.cost_usd)}</td>
+      <td><span class="dot" style="background:${m.is_error ? '#f44336' : '#4caf50'}"></span>${m.is_error ? 'error' : 'ok'}</td>
+    </tr>`).join("");
+
+  const html = `
+    <h1>Analytics</h1>
+    <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="num">${fmtCost(totals.total_cost)}</div><div class="label">Total Cost</div></div>
+      <div class="stat"><div class="num">${fmtCost(week.week_cost)}</div><div class="label">Cost (7d)</div></div>
+      <div class="stat"><div class="num">${totals.total_sessions || 0}</div><div class="label">Total Sessions</div></div>
+      <div class="stat"><div class="num">${fmtNum(totals.total_tokens)}</div><div class="label">Total Tokens</div></div>
+    </div>
+    <div class="card">
+      <h3>Recent Sessions</h3>
+      ${metrics.length === 0
+        ? '<div class="text-muted">No session metrics yet. Sessions are recorded after the first Claude invocation.</div>'
+        : `<table>
+        <thead><tr>
+          <th>Time</th><th>Type</th><th>Trigger</th><th>Duration</th>
+          <th>Input</th><th>Output</th><th>Cache Hits</th><th>Cost</th><th>Status</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`}
+    </div>`;
+
+  return c.html(layout("Analytics", html, "analytics"));
 });
 
 // --- Start ---

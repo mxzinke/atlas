@@ -12,6 +12,46 @@ CLAUDE_JSON="$HOME/.claude.json"
 
 source /atlas/app/hooks/failure-handler.sh
 
+save_session_metrics() {
+  local JSON_FILE="$1" SESSION_TYPE="$2" TRIGGER_NAME="$3"
+  local STARTED_AT="$4" ENDED_AT="$5" EXIT_CODE="${6:-0}"
+  [ -f "$JSON_FILE" ] || return 0
+  python3 - "$JSON_FILE" "$SESSION_TYPE" "$TRIGGER_NAME" \
+            "$STARTED_AT" "$ENDED_AT" "$EXIT_CODE" << 'PYEOF'
+import json, sys, sqlite3
+f, stype, tname, started, ended, exit_code = sys.argv[1:]
+try:
+    d = json.load(open(f))
+except:
+    d = {}
+usage = d.get('usage') or {}
+db_path = (
+    __import__('os').environ.get('HOME', '') + '/.index/atlas.db'
+)
+conn = sqlite3.connect(db_path)
+conn.execute('''INSERT INTO session_metrics
+  (session_type, session_id, trigger_name, started_at, ended_at,
+   duration_ms, input_tokens, output_tokens, cache_read_tokens,
+   cache_creation_tokens, cost_usd, num_turns, is_error)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
+    stype,
+    d.get('session_id', '') or '',
+    tname or '',
+    started, ended,
+    int(d.get('duration_ms') or 0),
+    int(usage.get('input_tokens') or 0),
+    int(usage.get('output_tokens') or 0),
+    int(usage.get('cache_read_input_tokens') or 0),
+    int(usage.get('cache_creation_input_tokens') or 0),
+    float(d.get('cost_usd') or 0),
+    int(d.get('num_turns') or 0),
+    1 if str(exit_code) != '0' else 0,
+))
+conn.commit()
+conn.close()
+PYEOF
+}
+
 # Disable remote MCP connectors that hang on startup.
 disable_remote_mcp() {
   [ -f "$CLAUDE_JSON" ] || return 0
@@ -62,8 +102,20 @@ Relay this result to the original sender now."
 
     if [ -n "$SESSION_ID" ]; then
       echo "[$(date)] Resuming trigger $TRIGGER_NAME (session=$SESSION_ID)" | tee -a "$LOG"
+      RELAY_START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+      RELAY_OUT=$(mktemp /tmp/relay-out-XXXXXX.json)
       ATLAS_TRIGGER="$TRIGGER_NAME" ATLAS_TRIGGER_CHANNEL="$CHANNEL" ATLAS_TRIGGER_SESSION_KEY="$SESSION_KEY" \
-        claude-atlas --mode trigger --resume "$SESSION_ID" --dangerously-skip-permissions -p "$RESUME_MSG" 2>&1 | tee -a "$LOG" || true
+        claude-atlas --mode trigger --output-format json --resume "$SESSION_ID" \
+        --dangerously-skip-permissions -p "$RESUME_MSG" > "$RELAY_OUT" 2>>"$LOG" || true
+      RELAY_EXIT=$?
+      RELAY_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+      python3 -c "
+import json,sys
+try: print(json.load(open(sys.argv[1])).get('result',''))
+except: pass
+" "$RELAY_OUT" >> "$LOG"
+      save_session_metrics "$RELAY_OUT" "trigger-relay" "$TRIGGER_NAME" "$RELAY_START" "$RELAY_END" "$RELAY_EXIT"
+      rm -f "$RELAY_OUT"
     elif [ -n "$TRIGGER_NAME" ]; then
       echo "[$(date)] No session ID for $TRIGGER_NAME — re-spawning via trigger.sh" | tee -a "$LOG"
       /atlas/app/triggers/trigger.sh "$TRIGGER_NAME" "$RESUME_MSG" "$SESSION_KEY" 2>&1 | tee -a "$LOG" || true
@@ -132,17 +184,41 @@ inotifywait -m "$WATCH_DIR" -e create,modify,attrib --exclude '\.(db|wal|shm)$' 
       disable_remote_mcp
 
       set +e
+      WORKER_START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+      WORKER_OUT=$(mktemp /tmp/worker-out-XXXXXX.json)
+
       if [ -n "$SESSION_ID" ]; then
         echo "[$(date)] Resuming session: $SESSION_ID"
-        claude-atlas --mode worker --resume "$SESSION_ID" --dangerously-skip-permissions \
-          -p "You have new tasks. Use get_next_task() to process them." >> /atlas/logs/session.log 2>&1
+        claude-atlas --mode worker --output-format json --resume "$SESSION_ID" \
+          --dangerously-skip-permissions \
+          -p "You have new tasks. Use get_next_task() to process them." \
+          > "$WORKER_OUT" 2>>/atlas/logs/session.log
       else
         echo "[$(date)] Starting new session"
-        claude-atlas --mode worker --dangerously-skip-permissions \
-          -p "You have new tasks. Use get_next_task() to process them." >> /atlas/logs/session.log 2>&1
+        claude-atlas --mode worker --output-format json \
+          --dangerously-skip-permissions \
+          -p "You have new tasks. Use get_next_task() to process them." \
+          > "$WORKER_OUT" 2>>/atlas/logs/session.log
       fi
       CLAUDE_EXIT=$?
       set -e
+
+      WORKER_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+      # Extract session_id from JSON output (supplements stop.sh which also saves it)
+      NEW_SESSION_ID=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get('session_id', ''))
+except: print('')
+" "$WORKER_OUT" 2>/dev/null || echo "")
+      if [ -n "$NEW_SESSION_ID" ]; then
+        echo "$NEW_SESSION_ID" > "$SESSION_FILE"
+      fi
+
+      save_session_metrics "$WORKER_OUT" "worker" "" "$WORKER_START" "$WORKER_END" "$CLAUDE_EXIT"
+      rm -f "$WORKER_OUT"
 
       rm -f "$LOCK_FILE"
 

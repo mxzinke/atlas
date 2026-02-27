@@ -68,6 +68,28 @@ function createTables(database: Database): void {
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // Session metrics: per-invocation cost and token tracking
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_type TEXT NOT NULL,
+      session_id TEXT,
+      trigger_name TEXT,
+      started_at TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      duration_ms INTEGER DEFAULT 0,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cache_read_tokens INTEGER DEFAULT 0,
+      cache_creation_tokens INTEGER DEFAULT 0,
+      cost_usd REAL DEFAULT 0,
+      num_turns INTEGER DEFAULT 0,
+      is_error INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_metrics_created ON session_metrics(created_at);
+  `);
 }
 
 function migrateSchema(database: Database): void {

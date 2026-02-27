@@ -140,6 +140,8 @@ fi
 
 echo "[$(date)] Trigger firing: $TRIGGER_NAME (mode=$SESSION_MODE, key=$SESSION_KEY, channel=$CHANNEL)" | tee -a "$LOG"
 
+TRIGGER_START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
 # Build Claude command
 disable_remote_mcp
 CLAUDE_ARGS=(-p --dangerously-skip-permissions)
@@ -189,6 +191,39 @@ except: print('')
     echo "[$(date)] Saved session for key=$SESSION_KEY: $NEW_SESSION_ID" | tee -a "$LOG"
   fi
 fi
+
+TRIGGER_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+python3 - "$TRIGGER_OUT" "$TRIGGER_NAME" "$TRIGGER_START" "$TRIGGER_END" << 'PYEOF'
+import json, sys, sqlite3, os
+f, tname, started, ended = sys.argv[1:]
+try:
+    d = json.load(open(f))
+except:
+    d = {}
+usage = d.get('usage') or {}
+db_path = os.environ.get('HOME', '') + '/.index/atlas.db'
+conn = sqlite3.connect(db_path)
+conn.execute('''INSERT OR IGNORE INTO session_metrics
+  (session_type, session_id, trigger_name, started_at, ended_at,
+   duration_ms, input_tokens, output_tokens, cache_read_tokens,
+   cache_creation_tokens, cost_usd, num_turns, is_error)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
+    'trigger',
+    d.get('session_id', '') or '',
+    tname,
+    started, ended,
+    int(d.get('duration_ms') or 0),
+    int(usage.get('input_tokens') or 0),
+    int(usage.get('output_tokens') or 0),
+    int(usage.get('cache_read_input_tokens') or 0),
+    int(usage.get('cache_creation_input_tokens') or 0),
+    float(d.get('cost_usd') or 0),
+    int(d.get('num_turns') or 0),
+    0,
+))
+conn.commit()
+conn.close()
+PYEOF
 
 rm -f "$TRIGGER_OUT"
 
