@@ -1,2 +1,3 @@
 #!/bin/bash
-exec python3 /atlas/app/integrations/signal/signal-addon.py "$@"
+export PYTHONUNBUFFERED=1
+exec python3 -u /atlas/app/integrations/signal/signal-addon.py "$@"

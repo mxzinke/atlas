@@ -119,7 +119,13 @@ autostart=true
 autorestart=true
 stdout_logfile=/atlas/logs/myservice.log
 stderr_logfile=/atlas/logs/myservice-error.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=3
+stderr_logfile_maxbytes=1MB
+stderr_logfile_backups=1
 ```
+
+**Python processes** — avoid stdout buffering by wrapping in a shell script that sets `PYTHONUNBUFFERED=1` and uses `python3 -u`. Without this, Python buffers ~8KB before writing to disk; if the process restarts before the buffer flushes, all recent logs are silently lost. The built-in `email` and `signal` bin wrappers already handle this.
 
 Then reload:
 ```bash
@@ -198,11 +204,15 @@ stdout_logfile=/atlas/logs/signal-daemon.log
 stderr_logfile=/atlas/logs/signal-daemon-error.log
 
 [program:signal-listen]
-command=python3 /atlas/app/integrations/signal/signal-daemon-listener.py
+command=/atlas/app/bin/signal listen
 autostart=true
 autorestart=true
 stdout_logfile=/atlas/logs/signal-listen.log
 stderr_logfile=/atlas/logs/signal-listen-error.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=3
+stderr_logfile_maxbytes=1MB
+stderr_logfile_backups=1
 ```
 
 Activate:
@@ -268,12 +278,31 @@ Reply directly via CLI: email reply <thread_id> "message"
 Escalate complex tasks via task_create.
 ```
 
-**Step 4: Add polling to crontab**
+**Step 4: Add polling**
 
-Edit `/atlas/workspace/crontab` and add **above** the marker:
+Option A — supervisord (recommended):
 
+Create `~/supervisor.d/email-poller.conf`:
+```ini
+[program:email-poller]
+command=/atlas/app/bin/email poll
+autostart=true
+autorestart=true
+stdout_logfile=/atlas/logs/email-poller.log
+stderr_logfile=/atlas/logs/email-poller-error.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=3
+stderr_logfile_maxbytes=1MB
+stderr_logfile_backups=1
 ```
-*/2 * * * *  email poll --once 2>&1 >> /atlas/logs/email.log
+
+Then: `supervisorctl reread && supervisorctl update`
+
+Option B — crontab:
+
+Edit `~/crontab` and add **above** the marker:
+```
+*/2 * * * *  email poll --once
 ```
 
 Thread tracking uses `In-Reply-To`/`References` headers — replies in the same thread share one persistent session.
