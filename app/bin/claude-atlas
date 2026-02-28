@@ -28,6 +28,32 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Resolve model from config.yml (unless --model was already passed)
+HAS_MODEL_FLAG=false
+for arg in "${CLAUDE_ARGS[@]}"; do
+    if [[ "$arg" == "--model" ]]; then
+        HAS_MODEL_FLAG=true
+        break
+    fi
+done
+
+if [ "$HAS_MODEL_FLAG" = false ]; then
+    CONFIG=""
+    if [ -f "$HOME/config.yml" ]; then
+        CONFIG="$HOME/config.yml"
+    elif [ -f "$APP_DIR/defaults/config.yml" ]; then
+        CONFIG="$APP_DIR/defaults/config.yml"
+    fi
+
+    MODEL="sonnet"  # default fallback
+    if [ -n "$CONFIG" ]; then
+        PARSED_MODEL=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG'))['models']['main'])" 2>/dev/null) || true
+        if [ -n "$PARSED_MODEL" ]; then
+            MODEL="$PARSED_MODEL"
+        fi
+    fi
+fi
+
 # Build system prompt content
 SYSTEM_PROMPT=""
 
@@ -82,6 +108,10 @@ fi
 FINAL_ARGS=()
 if [ -n "$SYSTEM_PROMPT" ]; then
     FINAL_ARGS+=(--append-system-prompt "$SYSTEM_PROMPT")
+fi
+# Inject --model from config if not already provided
+if [ "$HAS_MODEL_FLAG" = false ]; then
+    FINAL_ARGS+=(--model "$MODEL")
 fi
 FINAL_ARGS+=("${CLAUDE_ARGS[@]}")
 
