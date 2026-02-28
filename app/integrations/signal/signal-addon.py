@@ -9,7 +9,7 @@ database per Signal number.
 Subcommands:
   poll     [--once]              Poll signal-cli for new messages, process each
   incoming <sender> <message>    Inject a message: write to DB + inbox, fire trigger
-  send     <number> <message>    Send a Signal message via signal-cli
+  send     <number> <message>    Send a Signal message (supports --attach for files)
   contacts [--limit N]           List known contacts
   history  <number> [--limit]    Show message history with a contact
 """
@@ -230,16 +230,16 @@ def cmd_incoming(config, sender, message, name="", timestamp=""):
 
 # --- SEND command ---
 
-def _send_via_socket(to, message):
+def _send_via_socket(to, message, attachments=None):
     """Send via the running signal-cli daemon JSON-RPC socket."""
     import socket as _socket
     with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as s:
         s.settimeout(30)
         s.connect(DAEMON_SOCKET)
-        req = json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "send",
-            "params": {"recipient": [to], "message": message},
-        })
+        params = {"recipient": [to], "message": message}
+        if attachments:
+            params["attachments"] = [os.path.abspath(f) for f in attachments]
+        req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "send", "params": params})
         s.sendall(req.encode() + b"\n")
         # Read until newline (single JSON-RPC response)
         buf = b""
@@ -253,40 +253,54 @@ def _send_via_socket(to, message):
             raise RuntimeError(resp["error"].get("message", str(resp["error"])))
 
 
-def _send_via_cli(number, to, message):
+def _send_via_cli(number, to, message, attachments=None):
     """Send via direct signal-cli invocation (fallback when no daemon socket)."""
     bin_path = _find_signal_cli_bin()
     if not bin_path:
         raise FileNotFoundError("signal-cli binary not found")
-    result = subprocess.run(
-        [bin_path, "-a", number, "send", "-m", message, to],
-        capture_output=True, text=True, timeout=30,
-    )
+    cmd = [bin_path, "-a", number, "send", "-m", message]
+    for f in (attachments or []):
+        cmd.extend(["--attachment", os.path.abspath(f)])
+    cmd.append(to)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         raise RuntimeError(f"signal-cli send failed: {result.stderr.strip()}")
 
 
-def cmd_send(config, to, message):
+def cmd_send(config, to, message, attachments=None):
     """Send a Signal message — via daemon socket if running, otherwise via CLI."""
     number = config["number"]
     if not number:
         print("ERROR: No Signal number configured", file=sys.stderr)
         sys.exit(1)
 
+    # Validate attachment files exist
+    attachments = attachments or []
+    for f in attachments:
+        if not os.path.isfile(f):
+            print(f"ERROR: Attachment not found: {f}", file=sys.stderr)
+            sys.exit(1)
+
     db = get_signal_db(config)
     try:
         if os.path.exists(DAEMON_SOCKET):
-            _send_via_socket(to, message)
+            _send_via_socket(to, message, attachments)
         else:
-            _send_via_cli(number, to, message)
+            _send_via_cli(number, to, message, attachments)
 
         update_contact(db, to)
+        # Include attachment info in stored message
+        stored_msg = message
+        if attachments:
+            filenames = [os.path.basename(f) for f in attachments]
+            stored_msg += f"\n[Attachments: {', '.join(filenames)}]"
         db.execute("""
             INSERT INTO messages (contact_number, direction, body, timestamp)
             VALUES (?, 'out', ?, ?)
-        """, (to, message[:8000], datetime.now().isoformat()))
+        """, (to, stored_msg[:8000], datetime.now().isoformat()))
         db.commit()
-        print(f"Signal message sent to {to}")
+        att_info = f" (+{len(attachments)} attachment(s))" if attachments else ""
+        print(f"Signal message sent to {to}{att_info}")
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
@@ -383,6 +397,8 @@ Examples:
     p_send = sub.add_parser("send", help="Send a Signal message")
     p_send.add_argument("number", help="Recipient phone number")
     p_send.add_argument("message", help="Message text")
+    p_send.add_argument("--attach", action="append", default=[], metavar="FILE",
+                         help="Attach a file (image, PDF, etc.). Can be repeated.")
 
     # contacts
     p_contacts = sub.add_parser("contacts", help="List known contacts")
@@ -410,7 +426,7 @@ Examples:
         cmd_incoming(config, args.sender, args.message,
                      name=args.name, timestamp=args.timestamp)
     elif args.command == "send":
-        cmd_send(config, args.number, args.message)
+        cmd_send(config, args.number, args.message, attachments=args.attach)
     elif args.command == "contacts":
         cmd_contacts(config, limit=args.limit)
     elif args.command == "history":
