@@ -558,7 +558,7 @@ export function resolveModel(
 ): string {
   const homeDir = process.env.HOME ?? "/home/agent";
   const config = resolveConfig(homeDir);
-  const models = config.models as Record<string, string>;
+  const models = config.models as unknown as Record<string, string>;
   return models[triggerType] ?? models["trigger"] ?? "opus";
 }
 
@@ -779,7 +779,11 @@ export async function sendUsageWebhook(
     return;
   }
 
-  log.log(`Usage webhook failed: ${result.error} — queuing for retry`);
+  // Narrow explicitly: this tsc build doesn't always narrow `result` past the
+  // early-return above, so assert the already-proven-false branch here.
+  const failure = result as { ok: false; error: string };
+
+  log.log(`Usage webhook failed: ${failure.error} — queuing for retry`);
 
   // Queue for retry if DB available
   if (db) {
@@ -791,7 +795,7 @@ export async function sendUsageWebhook(
         config.webhook_url,
         payloadJson,
         config.webhook_secret || null,
-        result.error,
+        failure.error,
       );
     } catch {
       log.log("Failed to queue webhook for retry");
@@ -838,6 +842,9 @@ export async function flushWebhookQueue(
       db.prepare("DELETE FROM webhook_queue WHERE id = ?").run(item.id);
       log.log(`Queued webhook #${item.id} delivered successfully`);
     } else {
+      // Narrow explicitly: this tsc build doesn't always narrow `result` in
+      // this else-branch, so assert the already-proven-false branch here.
+      const failure = result as { ok: false; error: string };
       const nextAttempt = item.attempts + 1;
       if (nextAttempt > MAX_WEBHOOK_ATTEMPTS) {
         db.prepare("DELETE FROM webhook_queue WHERE id = ?").run(item.id);
@@ -852,7 +859,7 @@ export async function flushWebhookQueue(
         db.prepare(
           `UPDATE webhook_queue SET attempts = ?, last_error = ?, next_retry_at = datetime('now', '+${delayMin} minutes')
            WHERE id = ?`,
-        ).run(nextAttempt, result.error, item.id);
+        ).run(nextAttempt, failure.error, item.id);
         log.log(
           `Queued webhook #${item.id} retry ${nextAttempt}/${MAX_WEBHOOK_ATTEMPTS} — next in ${delayMin}m`,
         );
@@ -1456,10 +1463,15 @@ export async function runDirect(
   let isError = false;
 
   const resumeId = options?.resumeId;
-  const queryOptions: Parameters<typeof query>[0]["options"] = {
+  // Note: cast via `as` (not a contextual `: Options` annotation) so the SDK's
+  // excess-property check doesn't reject fields (e.g. autoMemoryEnabled) that
+  // work at runtime but aren't declared on the query() Options type in this
+  // SDK version. Follow-up: confirm with SDK docs whether these fields should
+  // be typed, or drop them if they're dead.
+  const queryOptions = {
     systemPrompt,
     model,
-    mcpServers,
+    mcpServers: mcpServers as any,
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     autoMemoryEnabled: false,
@@ -1469,7 +1481,7 @@ export async function runDirect(
     ...(CLAUDE_CODE_PATH
       ? { pathToClaudeCodeExecutable: CLAUDE_CODE_PATH }
       : {}),
-  };
+  } as unknown as Parameters<typeof query>[0]["options"];
 
   const q = query({ prompt, options: queryOptions });
 
@@ -1510,7 +1522,7 @@ export async function runDirect(
   if (options?.triggerName && capturedSessionId) {
     try {
       const usage = resultMsg && "usage" in resultMsg
-        ? (resultMsg as { usage?: Record<string, number> }).usage
+        ? (resultMsg as unknown as { usage?: Record<string, number> }).usage
         : undefined;
       const cost = resultMsg && "total_cost_usd" in resultMsg
         ? (resultMsg as { total_cost_usd?: number }).total_cost_usd ?? 0
@@ -2056,10 +2068,15 @@ export async function main(): Promise<void> {
     const injectionQueue: string[] = [];
     let inTurn = false;
 
-    const options: Parameters<typeof query>[0]["options"] = {
+    // Note: cast via `as` (not a contextual `: Options` annotation) so the SDK's
+    // excess-property check doesn't reject fields (e.g. autoMemoryEnabled) that
+    // work at runtime but aren't declared on the query() Options type in this
+    // SDK version. Follow-up: confirm with SDK docs whether these fields should
+    // be typed, or drop them if they're dead.
+    const options = {
       systemPrompt,
       model,
-      mcpServers,
+      mcpServers: mcpServers as any,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       autoMemoryEnabled: false,
@@ -2095,7 +2112,7 @@ export async function main(): Promise<void> {
           },
         ],
       },
-    };
+    } as unknown as Parameters<typeof query>[0]["options"];
 
     // Typing indicator: one-shot per turn (no heartbeat).
     // signal-cli's `sendTyping` auto-expires after ~15s on Signal's side,
@@ -2336,7 +2353,7 @@ export async function main(): Promise<void> {
   // resultMsg.usage — each subagent call has its own API request_id.
   // Scanning the JSONL files directly gives us the true total cost.
   const usage =
-    (resultMsg as { usage?: Record<string, number> } | null)?.usage ?? {};
+    (resultMsg as unknown as { usage?: Record<string, number> } | null)?.usage ?? {};
   let aggregated: AggregatedUsage = {
     inputTokens: 0,
     outputTokens: 0,

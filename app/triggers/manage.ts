@@ -188,7 +188,7 @@ switch (command) {
     if (!existing) die(`Trigger '${name}' not found`);
 
     const updates: string[] = [];
-    const params: unknown[] = [];
+    const params: any[] = [];
 
     if (flags["description"] !== undefined) {
       updates.push("description = ?");
