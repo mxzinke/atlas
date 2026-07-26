@@ -548,20 +548,24 @@ describe("listSidebarSessions", () => {
 });
 
 describe("GET /chat (full page)", () => {
-  test("includes the sidebar wrapper and a chat-container in the body", async () => {
+  test("includes the buildless chat-app skeleton and streaming markers", async () => {
     const req = new Request("http://localhost/chat");
     const res = await app.fetch(req);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('id="chat-sidebar"');
-    expect(html).toContain('class="chat-layout"');
-    expect(html).toContain('class="chat-container"');
-    // HTMX URLs must carry sessionKey so backend routes resolve correctly
-    expect(html).toContain('hx-get="/chat/conversation?sessionKey=_default"');
-    expect(html).toContain('hx-post="/chat?sessionKey=_default"');
+    expect(html).toContain('id="cw-root"');
+    expect(html).toContain('id="cw-messages"');
+    expect(html).toContain('id="cw-sidebar"');
+    expect(html).toContain('class="cw-composer"');
+    expect(html).toContain('data-session-key="_default"');
+    // Client JS is inlined directly into the page (self-contained, buildless).
+    expect(html).toContain('EventSource');
+    expect(html).toContain('/chat/stream?sessionKey=');
+    expect(html).toContain('/chat/api/messages');
+    expect(html).toContain('/chat/api/sessions');
   });
 
-  test("propagates explicit ?session=<key> into HTMX URLs", async () => {
+  test("propagates explicit ?session=<key> into the page's data-session-key", async () => {
     const db = getDb();
     const key = `pagetest-${Date.now()}`;
     db.prepare(`INSERT INTO chat_sessions (session_key, channel, title) VALUES (?, 'web', NULL)`).run(key);
@@ -570,11 +574,23 @@ describe("GET /chat (full page)", () => {
       const res = await app.fetch(req);
       expect(res.status).toBe(200);
       const html = await res.text();
-      expect(html).toContain(`hx-get="/chat/conversation?sessionKey=${key}"`);
-      expect(html).toContain(`hx-post="/chat?sessionKey=${key}"`);
+      expect(html).toContain(`data-session-key="${key}"`);
     } finally {
       db.prepare(`DELETE FROM chat_sessions WHERE session_key = ?`).run(key);
     }
+  });
+});
+
+describe("GET /chat/app.js", () => {
+  test("serves the client JS with a JS content-type and EventSource wiring", async () => {
+    const res = await app.fetch(new Request("http://localhost/chat/app.js"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") || "").toContain("javascript");
+    const js = await res.text();
+    expect(js).toContain("EventSource");
+    expect(js).toContain("/chat/stream?sessionKey=");
+    expect(js).toContain("/chat/api/messages");
+    expect(js).toContain("/chat/api/sessions");
   });
 });
 

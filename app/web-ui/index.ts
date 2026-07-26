@@ -1494,6 +1494,137 @@ app.get("/journal/content", (c) => {
 });
 
 // ============ CHAT ============
+
+/** Buildless streaming chat page: inline CSS + a self-contained skeleton that
+ *  `chat-app.js` (served at GET /chat/app.js) hydrates. All data comes from
+ *  the keyless endpoints defined above (GET /chat/api/messages, GET
+ *  /chat/stream, POST /chat/api/messages, GET /chat/api/sessions, and the
+ *  existing /chat/sessions/* mutation routes). See docs/chat-rework-spec.md. */
+function renderChatPage(sessionKey: string): string {
+  const style = `
+.cw-root{display:flex;height:100vh;overflow:hidden;background:#1a1b2e}
+.cw-sidebar{width:260px;background:#1e1f35;border-right:1px solid #3a3b55;display:flex;flex-direction:column;flex-shrink:0}
+.cw-sidebar-head{padding:12px;border-bottom:1px solid #3a3b55;display:flex;gap:8px}
+.cw-sidebar-head button{flex:1;font-size:13px;padding:8px}
+.cw-sidebar-list{flex:1;overflow-y:auto;padding:6px 0}
+.cw-session{position:relative;border-left:2px solid transparent}
+.cw-session:hover{background:#252640}
+.cw-session.active{background:#252640;border-left-color:#7c6ef0}
+.cw-session-link{display:block;padding:10px 12px;text-decoration:none;color:#ccc;cursor:pointer}
+.cw-session.active .cw-session-title{color:#e0e0e0}
+.cw-session-title{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:56px;font-size:13px;color:#ccc}
+.cw-session-meta{display:block;color:#666;font-size:11px;margin-top:2px}
+.cw-session-actions{position:absolute;right:6px;top:8px;display:none;gap:2px}
+.cw-session:hover .cw-session-actions,.cw-session.active .cw-session-actions{display:flex}
+.cw-session-actions button{background:transparent;border:1px solid #3a3b55;color:#999;border-radius:3px;padding:2px 6px;font-size:11px;cursor:pointer}
+.cw-session-actions button:hover{color:#7c6ef0;border-color:#7c6ef0;background:#1a1b2e}
+.cw-session-rename{padding:8px 12px;display:flex;gap:4px;flex-wrap:wrap}
+.cw-session-rename input{flex:1;min-width:120px;font-size:12px;padding:6px 8px;background:#1a1b2e;border:1px solid #3a3b55;border-radius:4px;color:#e0e0e0}
+.cw-session-rename button{font-size:11px;padding:4px 8px}
+.cw-sidebar-empty{padding:14px 12px;color:#666;font-size:12px;font-style:italic}
+.cw-mobile-toggle{display:none}
+.cw-main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.cw-messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column}
+.cw-row{display:flex;flex-direction:column;max-width:75%;margin-bottom:10px}
+.cw-row-user{align-self:flex-end;align-items:flex-end}
+.cw-row-bot{align-self:flex-start;align-items:flex-start;max-width:85%}
+.cw-bubble{border-radius:12px;padding:10px 14px;word-break:break-word}
+.cw-bubble-user{background:#7c6ef0;color:#fff}
+.cw-bubble-bot{background:#252640;border-left:2px solid #7c6ef0;color:#e0e0e0;min-width:20px}
+.cw-markdown p{margin:0 0 8px}
+.cw-markdown p:last-child{margin-bottom:0}
+.cw-markdown pre{background:#1a1b2e;border:1px solid #3a3b55;border-radius:4px;padding:10px;overflow-x:auto;font-size:12px}
+.cw-markdown code{font-family:inherit;background:#1a1b2e;padding:1px 4px;border-radius:3px;font-size:12px}
+.cw-markdown pre code{background:none;padding:0}
+.cw-markdown a{color:#7c6ef0}
+.cw-markdown ul,.cw-markdown ol{padding-left:20px;margin:0 0 8px}
+.cw-time{font-size:11px;color:#666;margin-top:4px}
+.cw-time-user{text-align:right}
+.cw-thinking{background:#1a1b2e;border:1px solid #2a2b45;border-radius:8px;overflow:hidden;opacity:.6;width:100%}
+.cw-thinking summary{padding:6px 12px;cursor:pointer;color:#666;font-size:11px;font-style:italic}
+.cw-thinking pre{margin:0;padding:8px 12px;font-size:11px;max-height:200px;overflow-y:auto;color:#888;white-space:pre-wrap;word-break:break-word}
+.cw-tool{background:#1e1f35;border:1px solid #3a3b55;border-radius:8px;overflow:hidden;width:100%}
+.cw-tool summary{padding:8px 12px;cursor:pointer;color:#999;font-size:12px;user-select:none}
+.cw-tool summary:hover{color:#7c6ef0}
+.cw-tool-item{padding:8px 12px;border-top:1px solid #3a3b55}
+.cw-tool-name{font-size:12px;color:#7c6ef0;font-weight:600;margin-bottom:4px}
+.cw-tool-input,.cw-tool-result{margin:4px 0;padding:6px 8px;background:#1a1b2e;border-radius:4px;font-size:11px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+.cw-tool-result{border-left:2px solid #4caf50}
+.cw-tool-running-pill{display:inline-flex;align-items:center;gap:8px;background:#1e1f35;border:1px solid #3a3b55;border-radius:20px;padding:6px 14px;font-size:12px;color:#999}
+.cw-spinner{width:12px;height:12px;border-radius:50%;border:2px solid #3a3b55;border-top-color:#7c6ef0;animation:cwspin .7s linear infinite;flex-shrink:0}
+@keyframes cwspin{to{transform:rotate(360deg)}}
+.cw-typing{background:#252640;border-left:2px solid #7c6ef0;border-radius:12px;padding:12px 14px;display:inline-flex;gap:4px}
+.cw-typing span{width:8px;height:8px;border-radius:50%;background:#7c6ef0;animation:cwdot 1.4s infinite ease-in-out both}
+.cw-typing span:nth-child(1){animation-delay:0s}
+.cw-typing span:nth-child(2){animation-delay:.2s}
+.cw-typing span:nth-child(3){animation-delay:.4s}
+@keyframes cwdot{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+.cw-scroll-pill{position:absolute;bottom:88px;left:50%;transform:translateX(-50%);background:#7c6ef0;color:#fff;border:none;border-radius:20px;padding:8px 16px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.cw-scroll-pill:hover{background:#6b5cd9}
+[hidden]{display:none!important}
+.cw-composer{border-top:1px solid #3a3b55;padding:12px 16px;display:flex;gap:8px;align-items:flex-end;background:#1e1f35}
+.cw-composer textarea{flex:1;resize:none;max-height:200px;background:#1a1b2e;border:1px solid #3a3b55;border-radius:8px;padding:10px 12px;color:#e0e0e0;font:13px/1.4 inherit}
+.cw-composer textarea:focus{outline:none;border-color:#7c6ef0}
+.cw-send-btn{background:#7c6ef0;color:#fff;border:none;border-radius:8px;width:40px;height:40px;cursor:pointer;font-size:16px;flex-shrink:0}
+.cw-send-btn:hover{background:#6b5cd9}
+.cw-running .cw-send-btn{box-shadow:0 0 0 2px rgba(124,110,240,.45)}
+.cw-reconnecting{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:#3a1b1b;border:1px solid #f44336;color:#f44336;padding:4px 12px;border-radius:12px;font-size:11px;z-index:5}
+@media (max-width:760px){
+  /* The shared dashboard nav (fixed 180px sidebar, in layout()) has no
+     responsive breakpoint of its own — every page overflows on narrow
+     viewports. Scoped to this page only (not touching layout()'s shared
+     CSS/other pages): hide it and reclaim the width so chat gets the
+     whole screen, with our own hamburger driving the chat session list. */
+  nav{display:none}
+  main{margin-left:0!important}
+  .cw-sidebar{position:fixed;left:0;top:0;bottom:0;z-index:20;width:80vw;max-width:300px;transform:translateX(-100%);transition:transform .2s ease}
+  .cw-sidebar.cw-sidebar-open{transform:translateX(0);box-shadow:2px 0 12px rgba(0,0,0,.4)}
+  .cw-mobile-toggle{display:block;position:absolute;top:10px;left:10px;z-index:6;background:#252640;border:1px solid #3a3b55;color:#e0e0e0;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer}
+  .cw-row{max-width:90%}
+  .cw-messages{padding-top:52px}
+}`;
+
+  const html = `<div class="cw-root" id="cw-root" data-session-key="${safe(sessionKey)}" data-agent-name="${safe(AGENT_NAME)}">
+  <aside class="cw-sidebar" id="cw-sidebar">
+    <div class="cw-sidebar-head"><button type="button" id="cw-new-chat">+ New chat</button></div>
+    <div class="cw-sidebar-list" id="cw-sidebar-list"><div class="cw-sidebar-empty">Loading…</div></div>
+  </aside>
+  <button type="button" class="cw-mobile-toggle" id="cw-mobile-toggle">☰ Chats</button>
+  <main class="cw-main">
+    <div class="cw-reconnecting" id="cw-reconnecting" hidden>Reconnecting…</div>
+    <div class="cw-messages" id="cw-messages"></div>
+    <button type="button" class="cw-scroll-pill" id="cw-scroll-pill" hidden>↓ New messages</button>
+    <div class="cw-composer">
+      <textarea id="cw-input" placeholder="Message ${safe(AGENT_NAME)}… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+      <button type="button" id="cw-send" class="cw-send-btn" title="Send">➤</button>
+    </div>
+  </main>
+</div>
+<style>${style}</style>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
+<script defer>
+${loadChatAppJs()}
+</script>`;
+  return html;
+}
+
+/** chat-app.js lives as its own file for readability/editing, but is inlined
+ *  directly into the /chat page's <script> tag (cached after first read) so
+ *  the whole page stays a single self-contained document — no extra request
+ *  round-trip, and no separate bundler/build step involved either way. */
+let chatAppJsCache: string | null = null;
+function loadChatAppJs(): string {
+  if (chatAppJsCache === null) {
+    try {
+      chatAppJsCache = readFileSync(join(import.meta.dir, "chat-app.js"), "utf-8");
+    } catch {
+      chatAppJsCache = "";
+    }
+  }
+  return chatAppJsCache;
+}
+
 app.get("/chat", (c) => {
   // Page URL accepts ?session=<key> (human-facing) or ?sessionKey=<key> (API-style).
   // Falls back to _default on missing/invalid input.
@@ -1506,39 +1637,13 @@ app.get("/chat", (c) => {
   } else {
     sessionKey = resolveWebSessionKey(c);
   }
-  const skQuery = `sessionKey=${encodeURIComponent(sessionKey)}`;
-  const sidebar = renderChatSidebar(sessionKey);
-  const html = `
-    <div class="chat-layout">
-      ${sidebar}
-      <div class="chat-main">
-        <div class="chat-container">
-          <div class="chat-messages" id="chat-messages" hx-get="/chat/conversation?${skQuery}" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
-          <form class="chat-input" hx-post="/chat?${skQuery}" hx-target="#chat-messages" hx-swap="innerHTML" hx-on::after-request="this.reset()">
-            <input type="text" name="content" placeholder="Type a message..." autocomplete="off" required>
-            <button type="submit">Send</button>
-          </form>
-        </div>
-      </div>
-    </div>
-    <script>
-    document.body.addEventListener('htmx:afterSwap', function(e) {
-      if (e.detail.target.id === 'chat-messages') {
-        var el = e.detail.target;
-        var isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-        var isPost = e.detail.requestConfig.verb === 'post';
-        var isInitial = !el.dataset.loaded;
-        if (isInitial) el.dataset.loaded = '1';
-        if (isNearBottom || isPost || isInitial) {
-          el.scrollTop = el.scrollHeight;
-        }
-      }
-    });
-    // Bridge: when sidebar's "+ New" returns HX-Redirect via the JSON-API,
-    // HTMX handles it automatically. No extra wiring required here.
-    </script>`;
+  return c.html(layout("Chat", renderChatPage(sessionKey), "chat", "padding:0;max-width:none"));
+});
 
-  return c.html(layout("Chat", html, "chat", "padding:0;max-width:none"));
+/** Also exposed standalone (same cached source as the inline embed) for
+ *  local debugging with normal browser devtools source maps/breakpoints. */
+app.get("/chat/app.js", (c) => {
+  return c.text(loadChatAppJs(), 200, { "Content-Type": "application/javascript; charset=utf-8" });
 });
 
 app.get("/chat/conversation", (c) => {
