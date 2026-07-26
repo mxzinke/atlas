@@ -1463,18 +1463,17 @@ export async function runDirect(
   let isError = false;
 
   const resumeId = options?.resumeId;
-  // Note: cast via `as` (not a contextual `: Options` annotation) so the SDK's
-  // excess-property check doesn't reject fields (e.g. autoMemoryEnabled) that
-  // work at runtime but aren't declared on the query() Options type in this
-  // SDK version. Follow-up: confirm with SDK docs whether these fields should
-  // be typed, or drop them if they're dead.
+  // Auto-memory is disabled via the settings layer: `autoMemoryEnabled` is a
+  // Settings field, not a top-level query() option — passing it at the top
+  // level is silently ignored. mcpServers is parsed from JSON so it's cast at
+  // the field; the outer `as` keeps that loose shape off the typecheck.
   const queryOptions = {
     systemPrompt,
     model,
     mcpServers: mcpServers as any,
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
-    autoMemoryEnabled: false,
+    settings: { autoMemoryEnabled: false },
     disallowedTools: DISALLOWED_BUILTIN_TOOLS,
     cwd: HOME,
     ...(resumeId ? { resume: resumeId } : { persistSession: false }),
@@ -2068,18 +2067,17 @@ export async function main(): Promise<void> {
     const injectionQueue: string[] = [];
     let inTurn = false;
 
-    // Note: cast via `as` (not a contextual `: Options` annotation) so the SDK's
-    // excess-property check doesn't reject fields (e.g. autoMemoryEnabled) that
-    // work at runtime but aren't declared on the query() Options type in this
-    // SDK version. Follow-up: confirm with SDK docs whether these fields should
-    // be typed, or drop them if they're dead.
+    // Auto-memory is disabled via the settings layer: `autoMemoryEnabled` is a
+    // Settings field, not a top-level query() option — passing it at the top
+    // level is silently ignored. mcpServers is parsed from JSON so it's cast at
+    // the field; the outer `as` keeps that loose shape off the typecheck.
     const options = {
       systemPrompt,
       model,
       mcpServers: mcpServers as any,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
-      autoMemoryEnabled: false,
+      settings: { autoMemoryEnabled: false },
       disallowedTools: DISALLOWED_BUILTIN_TOOLS,
       cwd: HOME,
       ...(resumeId ? { resume: resumeId } : {}),
