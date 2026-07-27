@@ -68,15 +68,22 @@ home/
 │   ├── atlas.db               # SQLite database (WAL mode)
 │   ├── .trigger-<name>.flock  # Per-trigger flock file (concurrency control)
 │   └── signal/, email/        # Channel-specific databases
-├── memory/                     # Long-term memory
-│   ├── MEMORY.md              # Persistent knowledge base
-│   ├── journal/               # Daily journal entries
+├── memory/                     # Long-term memory (agent-organized; see docs/memory.md)
+│   ├── MEMORY.md              # Index — map of what exists and where
+│   ├── journal/               # Daily journal entries (fixed layout)
 │   │   └── YYYY-MM-DD.md
-│   └── projects/              # Project-specific notes
+│   ├── entities/              # Services, platforms, people, companies
+│   ├── decisions/             # Key decisions with rationale
+│   ├── workflows/             # Learned procedures and playbooks
+│   ├── projects/              # Project-specific notes
+│   ├── responsibilities/      # Recurring ownership themes
+│   └── notes/                 # Free-form; folders below MEMORY.md are conventions,
+│                              # and the agent may add or reshape them
 ├── projects/                   # Working directories
 ├── triggers/                   # Custom trigger prompts
 │   └── <trigger-name>/
-│       └── prompt.md          # Prompt fallback if DB prompt is empty
+│       ├── prompt.md          # Prompt fallback if DB prompt is empty
+│       └── .prompt.shipped.md # Last shipped default (upgrade tracking; dreaming)
 ├── mcps/                       # User-installed MCP servers
 ├── secrets/                    # API keys, credentials (denylist)
 ├── bin/                        # User scripts
