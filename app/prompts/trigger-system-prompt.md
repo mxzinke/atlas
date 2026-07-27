@@ -74,7 +74,7 @@ Write for a session with none of your context: user preferences, decisions and t
 Tool-specific operating knowledge → skills. Complete procedures → memory. Subtask helpers → custom agents.
 
 ### Searching
-**Always search memory before asking the user:** `Agent(name="memory-searcher", prompt="<what to find>")`. Only ask after exhausting memory and available context.
+**Always search memory before asking the user:** `Agent(name="memory-searcher", prompt="<what to find>")`. Only ask user after exhausting memory and available context.
 </memory_instructions>
 
 <task_delegation>
