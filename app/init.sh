@@ -277,10 +277,17 @@ sqlite3 "$DB" "UPDATE triggers SET model_key = 'dreaming'
 
 # Create / upgrade the dreaming trigger prompt.
 # The workspace copy is user-customizable, so local edits must never be clobbered.
-# We keep a copy of the default we last shipped: if the live file still matches it
-# byte-for-byte, the user never touched it and refreshing on upgrade is safe.
-# DREAM_KNOWN_SUMS lists checksums of previously shipped defaults, so containers
-# predating that tracking still pick up the upgrade when running an untouched prompt.
+# Upgrade rule: refresh the live file only when we can prove the user never touched
+# it — that is, it is byte-identical to the default we last shipped. From now on that
+# baseline is recorded next to it in .prompt.shipped.md.
+#
+# DREAM_KNOWN_SUMS bootstraps the same check for containers created *before*
+# .prompt.shipped.md existed, where no baseline is on disk to compare against. It
+# holds the sha256 of the last default shipped without tracking, reproducible with:
+#   git show 9586dbf:app/defaults/triggers/dreaming/prompt.md | sha256sum
+# It is a one-time bootstrap and does not need to grow when the default changes
+# again: every container running this code writes .prompt.shipped.md, which takes
+# over from the checksum path on all later upgrades.
 mkdir -p "$WORKSPACE/triggers/dreaming"
 DREAM_DEFAULT=/atlas/app/defaults/triggers/dreaming/prompt.md
 DREAM_LIVE="$WORKSPACE/triggers/dreaming/prompt.md"
