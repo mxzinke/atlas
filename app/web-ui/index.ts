@@ -839,6 +839,13 @@ export function createChatSSEStream(sessionKey: string, opts?: { wantsStreamChun
             controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
           } catch {}
         };
+        // Keepalive comment so idle connections aren't dropped (~13s) by Bun /
+        // proxies while the agent is quiet — avoids constant reconnect churn.
+        const sendKeepalive = () => {
+          try {
+            controller.enqueue(encoder.encode(`: keepalive\n\n`));
+          } catch {}
+        };
 
         let lastUserMsgCount = 0;
         let lastAssistantMsgCount = 0;
@@ -857,6 +864,7 @@ export function createChatSSEStream(sessionKey: string, opts?: { wantsStreamChun
               controller.close();
               return;
             }
+            if (pollCount % 20 === 0) sendKeepalive(); // every ~10s
 
             const { session, dbMessages, assistantMsgs, isAgentRunning } = loadRawSessionData(sessionKey);
 

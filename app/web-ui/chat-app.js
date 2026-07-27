@@ -41,9 +41,8 @@
   var renderedKeys = new Map();
   /** messageId -> {wrapperEl, contentEl, buffer, rafScheduled, finalized} */
   var streamingBubbles = new Map();
-  /** recently-sent-by-me content+timestamp keys, set right after POST succeeds */
-  var typingEl = null;
-  var toolRunningEl = null;
+  /** single "agent is working" indicator, always kept as the last child */
+  var indicatorEl = null;
   var toolStepCount = 0;
 
   // ---- utils ---------------------------------------------------------------
@@ -118,6 +117,8 @@
   function appendNode(node) {
     var stick = isNearBottom();
     messagesEl.appendChild(node);
+    // Keep the working indicator (if any) pinned below all real content.
+    if (indicatorEl) messagesEl.appendChild(indicatorEl);
     if (stick) {
       scrollToBottom();
     } else {
@@ -141,9 +142,10 @@
   function keyForThinking(timestamp, content) {
     return "think:" + timestamp + ":" + truncate(content, 40);
   }
-  function keyForToolGroup(timestamp, calls) {
-    var names = calls.map(function (c) { return c.name; }).join(",");
-    return "tools:" + timestamp + ":" + names;
+  function keyForToolGroup(timestamp) {
+    // Stable per turn (timestamp of the first tool call) so a group is never
+    // duplicated when a reconcile brings more calls/results — it updates in place.
+    return "tools:" + timestamp;
   }
 
   function buildUserBubble(content, timestamp) {
@@ -197,11 +199,17 @@
     return wrap;
   }
 
-  function buildToolGroup(calls) {
-    var wrap = document.createElement("div");
-    wrap.className = "cw-row cw-row-bot cw-tool-row";
-    var details = document.createElement("details");
-    details.className = "cw-tool";
+  function toolGroupSig(calls) {
+    return calls
+      .map(function (c) { return c.name + "|" + (c.input || "").length + "|" + (c.result ? c.result.length : 0); })
+      .join(";");
+  }
+
+  /** (Re)fills a <details.cw-tool> element from the calls list, preserving its
+   *  current open/closed state. */
+  function fillToolDetails(details, calls) {
+    var wasOpen = details.open;
+    details.textContent = "";
     var summary = document.createElement("summary");
     summary.textContent =
       calls.length === 1
@@ -227,66 +235,69 @@
       }
       details.appendChild(item);
     });
+    details.open = wasOpen;
+  }
+
+  function buildToolGroup(calls) {
+    var wrap = document.createElement("div");
+    wrap.className = "cw-row cw-row-bot cw-tool-row";
+    var details = document.createElement("details");
+    details.className = "cw-tool";
+    fillToolDetails(details, calls);
     wrap.appendChild(details);
+    wrap._details = details;
+    wrap._sig = toolGroupSig(calls);
     return wrap;
   }
 
-  function buildToolRunning() {
-    var wrap = document.createElement("div");
-    wrap.className = "cw-row cw-row-bot cw-tool-running";
-    var pill = document.createElement("div");
-    pill.className = "cw-tool-running-pill";
-    var spinner = document.createElement("span");
-    spinner.className = "cw-spinner";
-    pill.appendChild(spinner);
-    var label = document.createElement("span");
-    label.className = "cw-tool-running-label";
-    pill.appendChild(label);
-    wrap.appendChild(pill);
-    wrap._label = label;
-    return wrap;
+  /** Updates an already-rendered tool group in place if its data changed,
+   *  keeping the user's expand/collapse state. */
+  function updateToolGroup(wrap, calls) {
+    var sig = toolGroupSig(calls);
+    if (wrap._sig === sig) return;
+    wrap._sig = sig;
+    fillToolDetails(wrap._details, calls);
   }
 
-  function buildTyping() {
-    var wrap = document.createElement("div");
-    wrap.className = "cw-row cw-row-bot";
-    var dots = document.createElement("div");
-    dots.className = "cw-typing";
-    dots.innerHTML = "<span></span><span></span><span></span>";
-    wrap.appendChild(dots);
-    return wrap;
+  // ---- single bottom indicator (typing dots OR running-tool pill) --------
+  // One element, always kept as the LAST child of the message list so it can
+  // never get stranded mid-conversation. Reflects the current working state.
+
+  function ensureIndicator() {
+    if (!indicatorEl) {
+      indicatorEl = document.createElement("div");
+      indicatorEl.className = "cw-row cw-row-bot cw-indicator";
+    }
+    messagesEl.appendChild(indicatorEl); // (re)attach at the very end
+    return indicatorEl;
   }
 
-  // ---- ephemeral indicators (typing / running-tool) ---------------------
+  function pinIfAtBottom() {
+    if (isNearBottom()) scrollToBottom();
+  }
 
   function showTyping() {
-    if (typingEl || toolRunningEl) return;
-    typingEl = buildTyping();
-    appendNode(typingEl);
+    var el = ensureIndicator();
+    el.innerHTML =
+      '<div class="cw-typing"><span></span><span></span><span></span></div>';
+    pinIfAtBottom();
   }
 
-  function clearTyping() {
-    if (typingEl) {
-      typingEl.remove();
-      typingEl = null;
-    }
-  }
-
-  function updateToolRunning(toolName, totalSteps) {
-    clearTyping();
+  function showToolRunning(toolName, totalSteps) {
     toolStepCount = totalSteps;
-    if (!toolRunningEl) {
-      toolRunningEl = buildToolRunning();
-      appendNode(toolRunningEl);
-    }
-    toolRunningEl._label.textContent =
+    var el = ensureIndicator();
+    el.innerHTML =
+      '<div class="cw-tool-running-pill"><span class="cw-spinner"></span>' +
+      '<span class="cw-tool-running-label"></span></div>';
+    el.querySelector(".cw-tool-running-label").textContent =
       "Running " + toolName + " · step " + totalSteps;
+    pinIfAtBottom();
   }
 
-  function clearToolRunning() {
-    if (toolRunningEl) {
-      toolRunningEl.remove();
-      toolRunningEl = null;
+  function hideIndicator() {
+    if (indicatorEl) {
+      indicatorEl.remove();
+      indicatorEl = null;
     }
   }
 
@@ -322,8 +333,12 @@
       renderedKeys.set(tk, tnode);
       appendNode(tnode);
     } else if (item.kind === "tool_group") {
-      var gk = keyForToolGroup(item.timestamp, item.calls);
-      if (renderedKeys.has(gk)) return;
+      var gk = keyForToolGroup(item.timestamp);
+      var existingGroup = renderedKeys.get(gk);
+      if (existingGroup) {
+        updateToolGroup(existingGroup, item.calls);
+        return;
+      }
       var gnode = buildToolGroup(item.calls);
       renderedKeys.set(gk, gnode);
       appendNode(gnode);
@@ -362,10 +377,7 @@
     return fetchSnapshot().then(function (data) {
       (data.items || []).forEach(renderSnapshotItem);
       setRunningState(!!data.isAgentRunning);
-      if (!isAgentRunning) {
-        clearTyping();
-        clearToolRunning();
-      }
+      if (!isAgentRunning) hideIndicator();
     }).catch(function () {});
   }
 
@@ -374,7 +386,7 @@
   function getOrCreateStreamingBubble(messageId) {
     var sb = streamingBubbles.get(messageId);
     if (sb) return sb;
-    clearTyping();
+    hideIndicator();
     var built = buildAssistantBubble("", null);
     appendNode(built.wrap);
     sb = {
@@ -451,22 +463,25 @@
           sb.finalized = true;
           renderMarkdownInto(sb.contentEl, data.content);
           renderedKeys.set(keyForAssistant(mid, data.content, data.timestamp), sb.wrap);
-          if (isNearBottom()) scrollToBottom();
+          // Turn may continue (more text/tools) — show "working" until it ends.
+          if (isAgentRunning) showTyping();
+          else if (isNearBottom()) scrollToBottom();
           return;
         }
         var ak = keyForAssistant(mid, data.content, data.timestamp);
         if (renderedKeys.has(ak)) return;
-        clearTyping();
+        hideIndicator();
         var built = buildAssistantBubble(data.content, data.timestamp);
         renderedKeys.set(ak, built.wrap);
         appendNode(built.wrap);
+        if (isAgentRunning) showTyping();
       } catch (e) {}
     });
 
     es.addEventListener("tool_activity", function (ev) {
       try {
         var data = JSON.parse(ev.data);
-        updateToolRunning(data.toolName, data.totalSteps);
+        showToolRunning(data.toolName, data.totalSteps);
       } catch (e) {}
     });
 
@@ -477,8 +492,7 @@
 
     es.addEventListener("agent_ended", function () {
       setRunningState(false);
-      clearTyping();
-      clearToolRunning();
+      hideIndicator();
       // Tool input/output and the final assistant text aren't fully known
       // from SSE alone (tool_activity carries no I/O) — pull the authoritative
       // grouped view once the turn is done.
@@ -738,8 +752,7 @@
     messagesEl.textContent = "";
     renderedKeys.clear();
     streamingBubbles.clear();
-    typingEl = null;
-    toolRunningEl = null;
+    indicatorEl = null;
     toolStepCount = 0;
     hideScrollPill();
   }
