@@ -645,6 +645,397 @@ function renderConversation(messages: ParsedMessage[]): string {
   return html;
 }
 
+// --- Shared chat helpers -----------------------------------------------
+// Reused by BOTH the API-key-guarded /api/v1/chat/* routes and the keyless
+// app-router /chat/* routes so the two surfaces never drift apart.
+
+/** Raw per-session data needed by every chat read endpoint: DB user
+ *  messages, JSONL-derived assistant/tool/thinking messages (user-text
+ *  entries filtered out — DB is ground truth for user turns), and the
+ *  isAgentRunning signal. */
+export interface RawSessionData {
+  session: { session_id: string } | null;
+  dbMessages: { id: number; content: string; created_at: string }[];
+  /** JSONL assistant/tool/thinking messages in JSONL order; user-text entries dropped. */
+  assistantMsgs: ParsedMessage[];
+  isAgentRunning: boolean;
+}
+
+export function loadRawSessionData(sessionKey: string): RawSessionData {
+  const dbMessages = db
+    .prepare("SELECT id, content, created_at FROM messages WHERE channel = ? AND session_key = ? ORDER BY created_at ASC, id ASC")
+    .all('web', sessionKey) as { id: number; content: string; created_at: string }[];
+
+  const session = db
+    .prepare("SELECT session_id FROM trigger_sessions WHERE trigger_name = ? AND session_key = ? LIMIT 1")
+    .get('web-chat', sessionKey) as { session_id: string } | null;
+
+  let assistantMsgs: ParsedMessage[] = [];
+  let isRunning = false;
+  if (session) {
+    const filePath = findSessionFile(session.session_id);
+    // Primary signal: a `claude --resume <session>` process is currently
+    // running. Secondary signal: JSONL last entry shows a pending turn —
+    // covers the gap between trigger fire and process startup.
+    isRunning = isClaudeProcessRunning(session.session_id) || isAgentTurnActive(filePath);
+    if (filePath) {
+      const all = parseSessionMessages(filePath);
+      assistantMsgs = all.filter(m => m.type !== "user-text");
+    }
+  }
+
+  const isAgentRunning = (!session && dbMessages.length > 0) || (!!session && isRunning);
+  return { session, dbMessages, assistantMsgs, isAgentRunning };
+}
+
+/** Merges DB user messages + JSONL assistant/tool/thinking messages into one
+ *  timestamp-sorted ParsedMessage[] (user-text before assistant/tool at
+ *  equal timestamps — matches every existing chat merge site). */
+export function mergeSessionMessages(data: RawSessionData): ParsedMessage[] {
+  const combined: ParsedMessage[] = [
+    ...data.dbMessages.map(m => ({
+      type: "user-text" as const,
+      content: m.content,
+      timestamp: sqliteToIso(m.created_at),
+    })),
+    ...data.assistantMsgs,
+  ];
+  combined.sort((a, b) => {
+    const ta = a.timestamp || "";
+    const tb = b.timestamp || "";
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    return (a.type === "user-text" ? 0 : 1) - (b.type === "user-text" ? 0 : 1);
+  });
+  return combined;
+}
+
+/** Structured (non-HTML) counterpart to renderConversation's grouping
+ *  algorithm: same rule for collapsing consecutive assistant-tool-use +
+ *  user-tool-result runs into one group, but emits JSON with full tool
+ *  input/result instead of an HTML fragment. Used by GET /chat/api/messages
+ *  so the browser client can show tool I/O that the SSE tool_activity event
+ *  intentionally omits. */
+export type ChatSnapshotItem =
+  | { kind: "user"; content: string; timestamp: string }
+  | { kind: "assistant"; content: string; timestamp: string; messageId?: string }
+  | { kind: "thinking"; content: string; timestamp: string }
+  | { kind: "tool_group"; timestamp: string; calls: { name: string; input: string; result?: string }[] };
+
+export function groupConversationForJson(messages: ParsedMessage[]): ChatSnapshotItem[] {
+  const items: ChatSnapshotItem[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+
+    if (msg.type === "user-text") {
+      items.push({ kind: "user", content: msg.content, timestamp: msg.timestamp || "" });
+      i++;
+    } else if (msg.type === "assistant-text") {
+      items.push({
+        kind: "assistant",
+        content: msg.content,
+        timestamp: msg.timestamp || "",
+        ...(msg.messageId ? { messageId: msg.messageId } : {}),
+      });
+      i++;
+    } else if (msg.type === "assistant-tool-use") {
+      // Same aggregation as renderConversation: consecutive tool calls and
+      // their results collapse into one group.
+      const groupTimestamp = msg.timestamp || "";
+      const calls: { name: string; input: string; result?: string }[] = [];
+      while (i < messages.length && (messages[i].type === "assistant-tool-use" || messages[i].type === "user-tool-result")) {
+        if (messages[i].type === "assistant-tool-use") {
+          calls.push({ name: messages[i].toolName || "tool", input: messages[i].toolInput || "" });
+        } else if (messages[i].type === "user-tool-result" && calls.length > 0) {
+          const last = calls[calls.length - 1];
+          if (!last.result) {
+            last.result = messages[i].content;
+          }
+        }
+        i++;
+      }
+      items.push({ kind: "tool_group", timestamp: groupTimestamp, calls });
+    } else if (msg.type === "assistant-thinking") {
+      items.push({ kind: "thinking", content: msg.content, timestamp: msg.timestamp || "" });
+      i++;
+    } else {
+      // user-tool-result without a preceding tool call — skip (mirrors renderConversation)
+      i++;
+    }
+  }
+  return items;
+}
+
+/** Row shape for the JSON session list — shared by GET /api/v1/chat/sessions
+ *  and the keyless GET /chat/api/sessions. */
+export interface ChatSessionListRow {
+  session_key: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+  message_count: number;
+  last_message_at: string | null;
+}
+
+export function listWebSessions(includeArchived: boolean): ChatSessionListRow[] {
+  const archivedClause = includeArchived ? "" : "AND cs.archived_at IS NULL";
+  const rows = db.prepare(`
+    SELECT
+      cs.session_key,
+      cs.title,
+      cs.created_at,
+      cs.updated_at,
+      cs.archived_at,
+      COUNT(m.id) AS message_count,
+      MAX(m.created_at) AS last_message_at
+    FROM chat_sessions cs
+    LEFT JOIN messages m ON m.channel = 'web' AND m.session_key = cs.session_key
+    WHERE cs.channel = 'web' ${archivedClause}
+    GROUP BY cs.session_key
+    ORDER BY cs.updated_at DESC
+  `).all() as {
+    session_key: string;
+    title: string | null;
+    created_at: string;
+    updated_at: string;
+    archived_at: string | null;
+    message_count: number;
+    last_message_at: string | null;
+  }[];
+
+  return rows.map(r => ({
+    session_key: r.session_key,
+    title: r.title,
+    created_at: sqliteToIso(r.created_at),
+    updated_at: sqliteToIso(r.updated_at),
+    archived_at: r.archived_at ? sqliteToIso(r.archived_at) : null,
+    message_count: r.message_count,
+    last_message_at: r.last_message_at ? sqliteToIso(r.last_message_at) : null,
+  }));
+}
+
+/**
+ * Builds the SSE `text/event-stream` Response for the chat token stream.
+ * Mounted identically at `/api/v1/chat/stream` (API-key guarded) and
+ * `/chat/stream` (keyless, app router, browser-facing) — extracted so both
+ * routes share the exact same polling/eventing logic instead of drifting.
+ *
+ * Event contract: init / user_message / assistant_message_chunk /
+ * assistant_message / tool_activity / agent_started / agent_ended. Polls
+ * every 500ms, self-caps at MAX_POLLS (5 min) — clients must reconnect if
+ * still running. Close is delayed 1.5s after agent_ended so slow consumers
+ * don't miss the event.
+ */
+export function createChatSSEStream(sessionKey: string, opts?: { wantsStreamChunks?: boolean }): Response {
+  const wantsStreamChunks = opts?.wantsStreamChunks ?? true;
+
+  return new Response(
+    new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        const send = (event: string, data: any) => {
+          try {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          } catch {}
+        };
+        // Keepalive comment so idle connections aren't dropped (~13s) by Bun /
+        // proxies while the agent is quiet — avoids constant reconnect churn.
+        const sendKeepalive = () => {
+          try {
+            controller.enqueue(encoder.encode(`: keepalive\n\n`));
+          } catch {}
+        };
+
+        let lastUserMsgCount = 0;
+        let lastAssistantMsgCount = 0;
+        let lastToolCount = 0;
+        let lastChunkId = 0; // monotonic id from web_chat_stream_chunks
+        let wasRunning = false;
+        let isFirstPoll = true;
+        let pollCount = 0;
+        const MAX_POLLS = 600; // 5 minutes at 500ms intervals
+
+        const poll = () => {
+          try {
+            pollCount++;
+            if (pollCount > MAX_POLLS) {
+              send("agent_ended", {});
+              controller.close();
+              return;
+            }
+            if (pollCount % 20 === 0) sendKeepalive(); // every ~10s
+
+            const { session, dbMessages, assistantMsgs, isAgentRunning } = loadRawSessionData(sessionKey);
+
+            // Categorize messages
+            const userMessages = dbMessages.map(m => ({
+              content: m.content,
+              timestamp: sqliteToIso(m.created_at),
+            }));
+            const assistantTextMsgs = assistantMsgs.filter(m => m.type === "assistant-text");
+            const toolUseMsgs = assistantMsgs.filter(m => m.type === "assistant-tool-use");
+
+            if (isFirstPoll) {
+              // Build full message list for init event
+              const messages: { role: string; content: string; timestamp: string; toolName?: string }[] = [];
+              for (const m of dbMessages) {
+                messages.push({
+                  role: "user",
+                  content: m.content,
+                  timestamp: sqliteToIso(m.created_at),
+                });
+              }
+              for (const m of assistantMsgs) {
+                if (m.type === "assistant-text") {
+                  messages.push({
+                    role: "assistant",
+                    content: m.content,
+                    timestamp: m.timestamp || "",
+                  });
+                } else if (m.type === "assistant-tool-use") {
+                  messages.push({
+                    role: "tool",
+                    content: m.content,
+                    timestamp: m.timestamp || "",
+                    toolName: m.toolName,
+                  });
+                }
+              }
+              messages.sort((a, b) => {
+                if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? -1 : 1;
+                return (a.role === "user" ? 0 : 1) - (b.role === "user" ? 0 : 1);
+              });
+
+              send("init", { messages, isAgentRunning, toolSteps: toolUseMsgs.length });
+
+              lastUserMsgCount = userMessages.length;
+              lastAssistantMsgCount = assistantTextMsgs.length;
+              lastToolCount = toolUseMsgs.length;
+              // Skip any chunks that landed before this stream opened — they
+              // belong to an already-rendered message and the JSONL is the
+              // canonical source for past turns. Without this, a fresh
+              // connection would replay every delta the trigger-runner has
+              // ever persisted for this session. When no session row exists
+              // yet (user opened the chat before sending anything) there are
+              // no chunks to skip; lastChunkId stays at 0 and the next poll
+              // will discover the new session and emit chunks from the start.
+              if (session) {
+                const maxRow = db
+                  .prepare(
+                    "SELECT COALESCE(MAX(id), 0) AS maxId FROM web_chat_stream_chunks WHERE session_id = ?",
+                  )
+                  .get(session.session_id) as { maxId: number } | undefined;
+                lastChunkId = maxRow?.maxId ?? 0;
+              }
+              wasRunning = isAgentRunning;
+              isFirstPoll = false;
+              setTimeout(poll, 500);
+              return;
+            }
+
+            // Subsequent polls — send granular events
+
+            // New user messages
+            if (userMessages.length > lastUserMsgCount) {
+              for (let i = lastUserMsgCount; i < userMessages.length; i++) {
+                send("user_message", { content: userMessages[i].content, timestamp: userMessages[i].timestamp });
+              }
+              lastUserMsgCount = userMessages.length;
+            }
+
+            // Stream chunks: emit any text deltas the trigger-runner has
+            // persisted since the last poll. Each chunk carries the same
+            // messageId the final assistant_message will carry, so the client
+            // can stitch them into a growing bubble and then replace with the
+            // final text once it lands in the JSONL. Skipped when the client
+            // opted out via ?stream=false.
+            if (wantsStreamChunks && session) {
+              const chunks = db
+                .prepare(
+                  `SELECT id, message_uuid, chunk_index, content_delta
+                     FROM web_chat_stream_chunks
+                     WHERE session_id = ? AND id > ?
+                     ORDER BY id ASC
+                     LIMIT 200`,
+                )
+                .all(session.session_id, lastChunkId) as {
+                  id: number;
+                  message_uuid: string;
+                  chunk_index: number;
+                  content_delta: string;
+                }[];
+              for (const ch of chunks) {
+                send("assistant_message_chunk", {
+                  messageId: ch.message_uuid,
+                  index: ch.chunk_index,
+                  delta: ch.content_delta,
+                });
+                lastChunkId = ch.id;
+              }
+            }
+
+            // New assistant text messages
+            if (assistantTextMsgs.length > lastAssistantMsgCount) {
+              for (let i = lastAssistantMsgCount; i < assistantTextMsgs.length; i++) {
+                send("assistant_message", {
+                  content: assistantTextMsgs[i].content,
+                  timestamp: assistantTextMsgs[i].timestamp || "",
+                  ...(assistantTextMsgs[i].messageId
+                    ? { messageId: assistantTextMsgs[i].messageId }
+                    : {}),
+                });
+              }
+              lastAssistantMsgCount = assistantTextMsgs.length;
+            }
+
+            // New tool uses
+            if (toolUseMsgs.length > lastToolCount) {
+              for (let i = lastToolCount; i < toolUseMsgs.length; i++) {
+                send("tool_activity", { toolName: toolUseMsgs[i].toolName, totalSteps: i + 1 });
+              }
+              lastToolCount = toolUseMsgs.length;
+            }
+
+            // Agent state transitions
+            if (!wasRunning && isAgentRunning) {
+              send("agent_started", {});
+            }
+            if (wasRunning && !isAgentRunning) {
+              send("agent_ended", {});
+              wasRunning = isAgentRunning;
+              // Delay close so the client has time to receive and process
+              // agent_ended before the connection drops. Without this, the event
+              // can be lost if the TCP buffer flushes at the same time as close.
+              setTimeout(() => { try { controller.close(); } catch {} }, 1500);
+              return;
+            }
+
+            wasRunning = isAgentRunning;
+            setTimeout(poll, 500);
+          } catch {
+            try { controller.close(); } catch {}
+          }
+        };
+
+        // Send initial state immediately
+        poll();
+      },
+      cancel() {
+        // Client disconnected — nothing to clean up since setTimeout
+        // will fail silently when controller is closed
+      },
+    }),
+    {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    }
+  );
+}
+
 // --- App ---
 export const app = new Hono();
 
@@ -1111,6 +1502,137 @@ app.get("/journal/content", (c) => {
 });
 
 // ============ CHAT ============
+
+/** Buildless streaming chat page: inline CSS + a self-contained skeleton that
+ *  `chat-app.js` (served at GET /chat/app.js) hydrates. All data comes from
+ *  the keyless endpoints defined above (GET /chat/api/messages, GET
+ *  /chat/stream, POST /chat/api/messages, GET /chat/api/sessions, and the
+ *  existing /chat/sessions/* mutation routes). See docs/chat-rework-spec.md. */
+function renderChatPage(sessionKey: string): string {
+  const style = `
+.cw-root{display:flex;height:100vh;overflow:hidden;background:#1a1b2e}
+.cw-sidebar{width:260px;background:#1e1f35;border-right:1px solid #3a3b55;display:flex;flex-direction:column;flex-shrink:0}
+.cw-sidebar-head{padding:12px;border-bottom:1px solid #3a3b55;display:flex;gap:8px}
+.cw-sidebar-head button{flex:1;font-size:13px;padding:8px}
+.cw-sidebar-list{flex:1;overflow-y:auto;padding:6px 0}
+.cw-session{position:relative;border-left:2px solid transparent}
+.cw-session:hover{background:#252640}
+.cw-session.active{background:#252640;border-left-color:#7c6ef0}
+.cw-session-link{display:block;padding:10px 12px;text-decoration:none;color:#ccc;cursor:pointer}
+.cw-session.active .cw-session-title{color:#e0e0e0}
+.cw-session-title{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:56px;font-size:13px;color:#ccc}
+.cw-session-meta{display:block;color:#666;font-size:11px;margin-top:2px}
+.cw-session-actions{position:absolute;right:6px;top:8px;display:none;gap:2px}
+.cw-session:hover .cw-session-actions,.cw-session.active .cw-session-actions{display:flex}
+.cw-session-actions button{background:transparent;border:1px solid #3a3b55;color:#999;border-radius:3px;padding:2px 6px;font-size:11px;cursor:pointer}
+.cw-session-actions button:hover{color:#7c6ef0;border-color:#7c6ef0;background:#1a1b2e}
+.cw-session-rename{padding:8px 12px;display:flex;gap:4px;flex-wrap:wrap}
+.cw-session-rename input{flex:1;min-width:120px;font-size:12px;padding:6px 8px;background:#1a1b2e;border:1px solid #3a3b55;border-radius:4px;color:#e0e0e0}
+.cw-session-rename button{font-size:11px;padding:4px 8px}
+.cw-sidebar-empty{padding:14px 12px;color:#666;font-size:12px;font-style:italic}
+.cw-mobile-toggle{display:none}
+.cw-main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.cw-messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column}
+.cw-row{display:flex;flex-direction:column;max-width:75%;margin-bottom:10px}
+.cw-row-user{align-self:flex-end;align-items:flex-end}
+.cw-row-bot{align-self:flex-start;align-items:flex-start;max-width:85%}
+.cw-bubble{border-radius:12px;padding:10px 14px;word-break:break-word}
+.cw-bubble-user{background:#7c6ef0;color:#fff}
+.cw-bubble-bot{background:#252640;border-left:2px solid #7c6ef0;color:#e0e0e0;min-width:20px}
+.cw-markdown p{margin:0 0 8px}
+.cw-markdown p:last-child{margin-bottom:0}
+.cw-markdown pre{background:#1a1b2e;border:1px solid #3a3b55;border-radius:4px;padding:10px;overflow-x:auto;font-size:12px}
+.cw-markdown code{font-family:inherit;background:#1a1b2e;padding:1px 4px;border-radius:3px;font-size:12px}
+.cw-markdown pre code{background:none;padding:0}
+.cw-markdown a{color:#7c6ef0}
+.cw-markdown ul,.cw-markdown ol{padding-left:20px;margin:0 0 8px}
+.cw-time{font-size:11px;color:#666;margin-top:4px}
+.cw-time-user{text-align:right}
+.cw-thinking{background:#1a1b2e;border:1px solid #2a2b45;border-radius:8px;overflow:hidden;opacity:.6;width:100%}
+.cw-thinking summary{padding:6px 12px;cursor:pointer;color:#666;font-size:11px;font-style:italic}
+.cw-thinking pre{margin:0;padding:8px 12px;font-size:11px;max-height:200px;overflow-y:auto;color:#888;white-space:pre-wrap;word-break:break-word}
+.cw-tool{background:#1e1f35;border:1px solid #3a3b55;border-radius:8px;overflow:hidden;width:100%}
+.cw-tool summary{padding:8px 12px;cursor:pointer;color:#999;font-size:12px;user-select:none}
+.cw-tool summary:hover{color:#7c6ef0}
+.cw-tool-item{padding:8px 12px;border-top:1px solid #3a3b55}
+.cw-tool-name{font-size:12px;color:#7c6ef0;font-weight:600;margin-bottom:4px}
+.cw-tool-input,.cw-tool-result{margin:4px 0;padding:6px 8px;background:#1a1b2e;border-radius:4px;font-size:11px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+.cw-tool-result{border-left:2px solid #4caf50}
+.cw-tool-running-pill{display:inline-flex;align-items:center;gap:8px;background:#1e1f35;border:1px solid #3a3b55;border-radius:20px;padding:6px 14px;font-size:12px;color:#999}
+.cw-spinner{width:12px;height:12px;border-radius:50%;border:2px solid #3a3b55;border-top-color:#7c6ef0;animation:cwspin .7s linear infinite;flex-shrink:0}
+@keyframes cwspin{to{transform:rotate(360deg)}}
+.cw-typing{background:#252640;border-left:2px solid #7c6ef0;border-radius:12px;padding:12px 14px;display:inline-flex;gap:4px}
+.cw-typing span{width:8px;height:8px;border-radius:50%;background:#7c6ef0;animation:cwdot 1.4s infinite ease-in-out both}
+.cw-typing span:nth-child(1){animation-delay:0s}
+.cw-typing span:nth-child(2){animation-delay:.2s}
+.cw-typing span:nth-child(3){animation-delay:.4s}
+@keyframes cwdot{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+.cw-scroll-pill{position:absolute;bottom:88px;left:50%;transform:translateX(-50%);background:#7c6ef0;color:#fff;border:none;border-radius:20px;padding:8px 16px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.cw-scroll-pill:hover{background:#6b5cd9}
+[hidden]{display:none!important}
+.cw-composer{border-top:1px solid #3a3b55;padding:12px 16px;display:flex;gap:8px;align-items:flex-end;background:#1e1f35}
+.cw-composer textarea{flex:1;resize:none;max-height:200px;background:#1a1b2e;border:1px solid #3a3b55;border-radius:8px;padding:10px 12px;color:#e0e0e0;font:13px/1.4 inherit}
+.cw-composer textarea:focus{outline:none;border-color:#7c6ef0}
+.cw-send-btn{background:#7c6ef0;color:#fff;border:none;border-radius:8px;width:40px;height:40px;cursor:pointer;font-size:16px;flex-shrink:0}
+.cw-send-btn:hover{background:#6b5cd9}
+.cw-running .cw-send-btn{box-shadow:0 0 0 2px rgba(124,110,240,.45)}
+.cw-reconnecting{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:#3a1b1b;border:1px solid #f44336;color:#f44336;padding:4px 12px;border-radius:12px;font-size:11px;z-index:5}
+@media (max-width:760px){
+  /* The shared dashboard nav (fixed 180px sidebar, in layout()) has no
+     responsive breakpoint of its own — every page overflows on narrow
+     viewports. Scoped to this page only (not touching layout()'s shared
+     CSS/other pages): hide it and reclaim the width so chat gets the
+     whole screen, with our own hamburger driving the chat session list. */
+  nav{display:none}
+  main{margin-left:0!important}
+  .cw-sidebar{position:fixed;left:0;top:0;bottom:0;z-index:20;width:80vw;max-width:300px;transform:translateX(-100%);transition:transform .2s ease}
+  .cw-sidebar.cw-sidebar-open{transform:translateX(0);box-shadow:2px 0 12px rgba(0,0,0,.4)}
+  .cw-mobile-toggle{display:block;position:absolute;top:10px;left:10px;z-index:6;background:#252640;border:1px solid #3a3b55;color:#e0e0e0;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer}
+  .cw-row{max-width:90%}
+  .cw-messages{padding-top:52px}
+}`;
+
+  const html = `<div class="cw-root" id="cw-root" data-session-key="${safe(sessionKey)}" data-agent-name="${safe(AGENT_NAME)}">
+  <aside class="cw-sidebar" id="cw-sidebar">
+    <div class="cw-sidebar-head"><button type="button" id="cw-new-chat">+ New chat</button></div>
+    <div class="cw-sidebar-list" id="cw-sidebar-list"><div class="cw-sidebar-empty">Loading…</div></div>
+  </aside>
+  <button type="button" class="cw-mobile-toggle" id="cw-mobile-toggle">☰ Chats</button>
+  <main class="cw-main">
+    <div class="cw-reconnecting" id="cw-reconnecting" hidden>Reconnecting…</div>
+    <div class="cw-messages" id="cw-messages"></div>
+    <button type="button" class="cw-scroll-pill" id="cw-scroll-pill" hidden>↓ New messages</button>
+    <div class="cw-composer">
+      <textarea id="cw-input" placeholder="Message ${safe(AGENT_NAME)}… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+      <button type="button" id="cw-send" class="cw-send-btn" title="Send">➤</button>
+    </div>
+  </main>
+</div>
+<style>${style}</style>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
+<script defer>
+${loadChatAppJs()}
+</script>`;
+  return html;
+}
+
+/** chat-app.js lives as its own file for readability/editing, but is inlined
+ *  directly into the /chat page's <script> tag (cached after first read) so
+ *  the whole page stays a single self-contained document — no extra request
+ *  round-trip, and no separate bundler/build step involved either way. */
+let chatAppJsCache: string | null = null;
+function loadChatAppJs(): string {
+  if (chatAppJsCache === null) {
+    try {
+      chatAppJsCache = readFileSync(join(import.meta.dir, "chat-app.js"), "utf-8");
+    } catch {
+      chatAppJsCache = "";
+    }
+  }
+  return chatAppJsCache;
+}
+
 app.get("/chat", (c) => {
   // Page URL accepts ?session=<key> (human-facing) or ?sessionKey=<key> (API-style).
   // Falls back to _default on missing/invalid input.
@@ -1123,39 +1645,13 @@ app.get("/chat", (c) => {
   } else {
     sessionKey = resolveWebSessionKey(c);
   }
-  const skQuery = `sessionKey=${encodeURIComponent(sessionKey)}`;
-  const sidebar = renderChatSidebar(sessionKey);
-  const html = `
-    <div class="chat-layout">
-      ${sidebar}
-      <div class="chat-main">
-        <div class="chat-container">
-          <div class="chat-messages" id="chat-messages" hx-get="/chat/conversation?${skQuery}" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
-          <form class="chat-input" hx-post="/chat?${skQuery}" hx-target="#chat-messages" hx-swap="innerHTML" hx-on::after-request="this.reset()">
-            <input type="text" name="content" placeholder="Type a message..." autocomplete="off" required>
-            <button type="submit">Send</button>
-          </form>
-        </div>
-      </div>
-    </div>
-    <script>
-    document.body.addEventListener('htmx:afterSwap', function(e) {
-      if (e.detail.target.id === 'chat-messages') {
-        var el = e.detail.target;
-        var isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-        var isPost = e.detail.requestConfig.verb === 'post';
-        var isInitial = !el.dataset.loaded;
-        if (isInitial) el.dataset.loaded = '1';
-        if (isNearBottom || isPost || isInitial) {
-          el.scrollTop = el.scrollHeight;
-        }
-      }
-    });
-    // Bridge: when sidebar's "+ New" returns HX-Redirect via the JSON-API,
-    // HTMX handles it automatically. No extra wiring required here.
-    </script>`;
+  return c.html(layout("Chat", renderChatPage(sessionKey), "chat", "padding:0;max-width:none"));
+});
 
-  return c.html(layout("Chat", html, "chat", "padding:0;max-width:none"));
+/** Also exposed standalone (same cached source as the inline embed) for
+ *  local debugging with normal browser devtools source maps/breakpoints. */
+app.get("/chat/app.js", (c) => {
+  return c.text(loadChatAppJs(), 200, { "Content-Type": "application/javascript; charset=utf-8" });
 });
 
 app.get("/chat/conversation", (c) => {
@@ -1294,6 +1790,96 @@ app.post("/chat", async (c) => {
   });
 
   return c.html(renderConversation(combined) + TYPING);
+});
+
+// ============ KEYLESS BROWSER CHAT API (app router, no API key) ============
+// `/chat*` is perimeter-trusted (no auth), unlike `/api/v1/*` (ATLAS_API_KEY
+// guarded). These endpoints back the new streaming chat frontend and share
+// their logic with the equivalent /api/v1/chat/* routes via the helpers
+// defined above (loadRawSessionData, mergeSessionMessages,
+// groupConversationForJson, listWebSessions, createChatSSEStream).
+
+/** GET /chat/stream?sessionKey= — same SSE event contract as
+ *  GET /api/v1/chat/stream, just keyless. */
+app.get("/chat/stream", (c) => {
+  const sessionKey = resolveWebSessionKey(c);
+  const streamParam = c.req.query("stream");
+  const wantsStreamChunks = streamParam !== "false" && streamParam !== "0";
+  return createChatSSEStream(sessionKey, { wantsStreamChunks });
+});
+
+/** GET /chat/api/messages?sessionKey= — JSON snapshot for initial load and
+ *  tool-call detail (input + result), which the SSE tool_activity event
+ *  doesn't carry. */
+app.get("/chat/api/messages", (c) => {
+  const sessionKey = resolveWebSessionKey(c);
+  const raw = loadRawSessionData(sessionKey);
+  const combined = mergeSessionMessages(raw);
+  const items = groupConversationForJson(combined);
+  return c.json({ isAgentRunning: raw.isAgentRunning, items });
+});
+
+/** POST /chat/api/messages — JSON send. Mirrors POST /chat exactly (same
+ *  validation, session touch, INSERT, wake file, trigger fire) but returns
+ *  JSON instead of an HTML fragment. */
+app.post("/chat/api/messages", async (c) => {
+  const sessionKey = resolveWebSessionKey(c);
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const content = ((body?.content as string) ?? "").trim();
+  if (!content) return c.json({ error: "content is required" }, 400);
+
+  // Touch/create session row. Pass derived title on every call — touchChatSession
+  // uses COALESCE so an existing non-null title (manual or earlier derived) wins.
+  touchChatSession(sessionKey, { title: deriveSessionTitle(content) });
+
+  const msg = db
+    .prepare(
+      "INSERT INTO messages (channel, sender, content, session_key) VALUES ('web', 'web-ui', ?, ?) RETURNING *",
+    )
+    .get(content, sessionKey) as any;
+
+  // Touch wake file
+  try {
+    mkdirSync(`${WS}/inbox`, { recursive: true });
+    closeSync(openSync(WAKE, "w"));
+  } catch {}
+
+  // Wrap the user text in the <webmsg> envelope before it lands as the
+  // agent's user-turn. No per-message attrs on this path (parity with POST /chat).
+  const chatWrappedContent = wrapWebMessage(content.trim().slice(0, 20000));
+
+  // Fire trigger (like signal/email addons do)
+  const payload = JSON.stringify({
+    inbox_message_id: msg.id,
+    sender: "web-ui",
+    message: chatWrappedContent,
+    timestamp: sqliteToIso(msg.created_at),
+  });
+  Bun.spawn(
+    ["/atlas/app/triggers/trigger.sh", "web-chat", payload, sessionKey],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+
+  return c.json({
+    ok: true,
+    message: {
+      id: msg.id,
+      content: msg.content,
+      timestamp: sqliteToIso(msg.created_at),
+    },
+  });
+});
+
+/** GET /chat/api/sessions?includeArchived= — JSON session list, keyless
+ *  counterpart to GET /api/v1/chat/sessions. */
+app.get("/chat/api/sessions", (c) => {
+  const includeArchived = c.req.query("includeArchived") === "true";
+  return c.json({ sessions: listWebSessions(includeArchived) });
 });
 
 // --- Chat sidebar actions (HTMX-flavoured wrappers around /api/v1/chat/sessions).
@@ -2912,270 +3498,14 @@ api.get("/chat/stream", (c) => {
   // the old "wait for the whole message" UX can pass `?stream=false`.
   const streamParam = c.req.query("stream");
   const wantsStreamChunks = streamParam !== "false" && streamParam !== "0";
-
-  return c.newResponse(
-    new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder();
-        const send = (event: string, data: any) => {
-          try {
-            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-          } catch {}
-        };
-
-        let lastUserMsgCount = 0;
-        let lastAssistantMsgCount = 0;
-        let lastToolCount = 0;
-        let lastChunkId = 0; // monotonic id from web_chat_stream_chunks
-        let wasRunning = false;
-        let isFirstPoll = true;
-        let pollCount = 0;
-        const MAX_POLLS = 600; // 5 minutes at 500ms intervals
-
-        const poll = () => {
-          try {
-            pollCount++;
-            if (pollCount > MAX_POLLS) {
-              send("agent_ended", {});
-              controller.close();
-              return;
-            }
-
-            // User messages from DB
-            const dbMessages = db
-              .prepare("SELECT id, content, created_at FROM messages WHERE channel = ? AND session_key = ? ORDER BY created_at ASC, id ASC")
-              .all('web', sessionKey) as { id: number; content: string; created_at: string }[];
-
-            // Assistant messages from JSONL session file
-            const session = db
-              .prepare("SELECT session_id FROM trigger_sessions WHERE trigger_name = ? AND session_key = ? LIMIT 1")
-              .get('web-chat', sessionKey) as any;
-
-            let assistantMsgs: ParsedMessage[] = [];
-            let isRunning = false;
-            if (session) {
-              const filePath = findSessionFile(session.session_id);
-              // Primary signal: a `claude --resume <session>` process is
-              // currently running. Secondary signal: JSONL last entry shows a
-              // pending turn — covers the gap between trigger fire and
-              // process startup, plus tool_use waiting on results.
-              isRunning = isClaudeProcessRunning(session.session_id) || isAgentTurnActive(filePath);
-              if (filePath) {
-                const all = parseSessionMessages(filePath);
-                assistantMsgs = all.filter(m => m.type !== "user-text");
-              }
-            }
-
-            const isAgentRunning = (!session && dbMessages.length > 0) || (!!session && isRunning);
-
-            // Categorize messages
-            const userMessages = dbMessages.map(m => ({
-              content: m.content,
-              timestamp: sqliteToIso(m.created_at),
-            }));
-            const assistantTextMsgs = assistantMsgs.filter(m => m.type === "assistant-text");
-            const toolUseMsgs = assistantMsgs.filter(m => m.type === "assistant-tool-use");
-
-            if (isFirstPoll) {
-              // Build full message list for init event
-              const messages: { role: string; content: string; timestamp: string; toolName?: string }[] = [];
-              for (const m of dbMessages) {
-                messages.push({
-                  role: "user",
-                  content: m.content,
-                  timestamp: sqliteToIso(m.created_at),
-                });
-              }
-              for (const m of assistantMsgs) {
-                if (m.type === "assistant-text") {
-                  messages.push({
-                    role: "assistant",
-                    content: m.content,
-                    timestamp: m.timestamp || "",
-                  });
-                } else if (m.type === "assistant-tool-use") {
-                  messages.push({
-                    role: "tool",
-                    content: m.content,
-                    timestamp: m.timestamp || "",
-                    toolName: m.toolName,
-                  });
-                }
-              }
-              messages.sort((a, b) => {
-                if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? -1 : 1;
-                return (a.role === "user" ? 0 : 1) - (b.role === "user" ? 0 : 1);
-              });
-
-              send("init", { messages, isAgentRunning, toolSteps: toolUseMsgs.length });
-
-              lastUserMsgCount = userMessages.length;
-              lastAssistantMsgCount = assistantTextMsgs.length;
-              lastToolCount = toolUseMsgs.length;
-              // Skip any chunks that landed before this stream opened — they
-              // belong to an already-rendered message and the JSONL is the
-              // canonical source for past turns. Without this, a fresh
-              // connection would replay every delta the trigger-runner has
-              // ever persisted for this session. When no session row exists
-              // yet (user opened the chat before sending anything) there are
-              // no chunks to skip; lastChunkId stays at 0 and the next poll
-              // will discover the new session and emit chunks from the start.
-              if (session) {
-                const maxRow = db
-                  .prepare(
-                    "SELECT COALESCE(MAX(id), 0) AS maxId FROM web_chat_stream_chunks WHERE session_id = ?",
-                  )
-                  .get(session.session_id) as { maxId: number } | undefined;
-                lastChunkId = maxRow?.maxId ?? 0;
-              }
-              wasRunning = isAgentRunning;
-              isFirstPoll = false;
-              setTimeout(poll, 500);
-              return;
-            }
-
-            // Subsequent polls — send granular events
-
-            // New user messages
-            if (userMessages.length > lastUserMsgCount) {
-              for (let i = lastUserMsgCount; i < userMessages.length; i++) {
-                send("user_message", { content: userMessages[i].content, timestamp: userMessages[i].timestamp });
-              }
-              lastUserMsgCount = userMessages.length;
-            }
-
-            // Stream chunks: emit any text deltas the trigger-runner has
-            // persisted since the last poll. Each chunk carries the same
-            // messageId the final assistant_message will carry, so the client
-            // can stitch them into a growing bubble and then replace with the
-            // final text once it lands in the JSONL. Skipped when the client
-            // opted out via ?stream=false.
-            if (wantsStreamChunks && session) {
-              const chunks = db
-                .prepare(
-                  `SELECT id, message_uuid, chunk_index, content_delta
-                     FROM web_chat_stream_chunks
-                     WHERE session_id = ? AND id > ?
-                     ORDER BY id ASC
-                     LIMIT 200`,
-                )
-                .all(session.session_id, lastChunkId) as {
-                  id: number;
-                  message_uuid: string;
-                  chunk_index: number;
-                  content_delta: string;
-                }[];
-              for (const ch of chunks) {
-                send("assistant_message_chunk", {
-                  messageId: ch.message_uuid,
-                  index: ch.chunk_index,
-                  delta: ch.content_delta,
-                });
-                lastChunkId = ch.id;
-              }
-            }
-
-            // New assistant text messages
-            if (assistantTextMsgs.length > lastAssistantMsgCount) {
-              for (let i = lastAssistantMsgCount; i < assistantTextMsgs.length; i++) {
-                send("assistant_message", {
-                  content: assistantTextMsgs[i].content,
-                  timestamp: assistantTextMsgs[i].timestamp || "",
-                  ...(assistantTextMsgs[i].messageId
-                    ? { messageId: assistantTextMsgs[i].messageId }
-                    : {}),
-                });
-              }
-              lastAssistantMsgCount = assistantTextMsgs.length;
-            }
-
-            // New tool uses
-            if (toolUseMsgs.length > lastToolCount) {
-              for (let i = lastToolCount; i < toolUseMsgs.length; i++) {
-                send("tool_activity", { toolName: toolUseMsgs[i].toolName, totalSteps: i + 1 });
-              }
-              lastToolCount = toolUseMsgs.length;
-            }
-
-            // Agent state transitions
-            if (!wasRunning && isAgentRunning) {
-              send("agent_started", {});
-            }
-            if (wasRunning && !isAgentRunning) {
-              send("agent_ended", {});
-              wasRunning = isAgentRunning;
-              // Delay close so the client has time to receive and process
-              // agent_ended before the connection drops. Without this, the event
-              // can be lost if the TCP buffer flushes at the same time as close.
-              setTimeout(() => { try { controller.close(); } catch {} }, 1500);
-              return;
-            }
-
-            wasRunning = isAgentRunning;
-            setTimeout(poll, 500);
-          } catch {
-            try { controller.close(); } catch {}
-          }
-        };
-
-        // Send initial state immediately
-        poll();
-      },
-      cancel() {
-        // Client disconnected — nothing to clean up since setTimeout
-        // will fail silently when controller is closed
-      },
-    }),
-    {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-      },
-    }
-  );
+  return createChatSSEStream(sessionKey, { wantsStreamChunks });
 });
 
 // ============ CHAT SESSION MANAGEMENT ============
 
 api.get("/chat/sessions", (c) => {
   const includeArchived = c.req.query("includeArchived") === "true";
-  const archivedClause = includeArchived ? "" : "AND cs.archived_at IS NULL";
-  const rows = db.prepare(`
-    SELECT
-      cs.session_key,
-      cs.title,
-      cs.created_at,
-      cs.updated_at,
-      cs.archived_at,
-      COUNT(m.id) AS message_count,
-      MAX(m.created_at) AS last_message_at
-    FROM chat_sessions cs
-    LEFT JOIN messages m ON m.channel = 'web' AND m.session_key = cs.session_key
-    WHERE cs.channel = 'web' ${archivedClause}
-    GROUP BY cs.session_key
-    ORDER BY cs.updated_at DESC
-  `).all() as {
-    session_key: string;
-    title: string | null;
-    created_at: string;
-    updated_at: string;
-    archived_at: string | null;
-    message_count: number;
-    last_message_at: string | null;
-  }[];
-
-  return c.json({
-    sessions: rows.map(r => ({
-      session_key: r.session_key,
-      title: r.title,
-      created_at: sqliteToIso(r.created_at),
-      updated_at: sqliteToIso(r.updated_at),
-      archived_at: r.archived_at ? sqliteToIso(r.archived_at) : null,
-      message_count: r.message_count,
-      last_message_at: r.last_message_at ? sqliteToIso(r.last_message_at) : null,
-    })),
-  });
+  return c.json({ sessions: listWebSessions(includeArchived) });
 });
 
 api.post("/chat/sessions", async (c) => {

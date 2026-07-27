@@ -4,11 +4,11 @@
  */
 
 import { test, describe, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
+import { tmpdir, homedir } from "os";
 
-import { sqliteToIso, isAgentTurnActive, isClaudeProcessRunning, parseSessionMessages, app, analyticsWhere, daysAgo, todayIso, resolveWebSessionKey, deriveSessionTitle, renderChatSidebar, listSidebarSessions, wrapWebMessage } from "./index";
+import { sqliteToIso, isAgentTurnActive, isClaudeProcessRunning, parseSessionMessages, app, analyticsWhere, daysAgo, todayIso, resolveWebSessionKey, deriveSessionTitle, renderChatSidebar, listSidebarSessions, wrapWebMessage, groupConversationForJson, listWebSessions } from "./index";
 import { getDb } from "../lib/atlas-db";
 
 describe("sqliteToIso", () => {
@@ -548,20 +548,24 @@ describe("listSidebarSessions", () => {
 });
 
 describe("GET /chat (full page)", () => {
-  test("includes the sidebar wrapper and a chat-container in the body", async () => {
+  test("includes the buildless chat-app skeleton and streaming markers", async () => {
     const req = new Request("http://localhost/chat");
     const res = await app.fetch(req);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('id="chat-sidebar"');
-    expect(html).toContain('class="chat-layout"');
-    expect(html).toContain('class="chat-container"');
-    // HTMX URLs must carry sessionKey so backend routes resolve correctly
-    expect(html).toContain('hx-get="/chat/conversation?sessionKey=_default"');
-    expect(html).toContain('hx-post="/chat?sessionKey=_default"');
+    expect(html).toContain('id="cw-root"');
+    expect(html).toContain('id="cw-messages"');
+    expect(html).toContain('id="cw-sidebar"');
+    expect(html).toContain('class="cw-composer"');
+    expect(html).toContain('data-session-key="_default"');
+    // Client JS is inlined directly into the page (self-contained, buildless).
+    expect(html).toContain('EventSource');
+    expect(html).toContain('/chat/stream?sessionKey=');
+    expect(html).toContain('/chat/api/messages');
+    expect(html).toContain('/chat/api/sessions');
   });
 
-  test("propagates explicit ?session=<key> into HTMX URLs", async () => {
+  test("propagates explicit ?session=<key> into the page's data-session-key", async () => {
     const db = getDb();
     const key = `pagetest-${Date.now()}`;
     db.prepare(`INSERT INTO chat_sessions (session_key, channel, title) VALUES (?, 'web', NULL)`).run(key);
@@ -570,11 +574,23 @@ describe("GET /chat (full page)", () => {
       const res = await app.fetch(req);
       expect(res.status).toBe(200);
       const html = await res.text();
-      expect(html).toContain(`hx-get="/chat/conversation?sessionKey=${key}"`);
-      expect(html).toContain(`hx-post="/chat?sessionKey=${key}"`);
+      expect(html).toContain(`data-session-key="${key}"`);
     } finally {
       db.prepare(`DELETE FROM chat_sessions WHERE session_key = ?`).run(key);
     }
+  });
+});
+
+describe("GET /chat/app.js", () => {
+  test("serves the client JS with a JS content-type and EventSource wiring", async () => {
+    const res = await app.fetch(new Request("http://localhost/chat/app.js"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") || "").toContain("javascript");
+    const js = await res.text();
+    expect(js).toContain("EventSource");
+    expect(js).toContain("/chat/stream?sessionKey=");
+    expect(js).toContain("/chat/api/messages");
+    expect(js).toContain("/chat/api/sessions");
   });
 });
 
@@ -912,5 +928,318 @@ describe("POST /api/v1/chat/messages — webmsg envelope smoke test", () => {
     const json = await res.json() as any;
     expect(json.ok).toBe(true);
     expect(json.message.content).toBe("Hello");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Keyless browser chat API: GET/POST /chat/api/messages, GET /chat/api/sessions,
+// GET /chat/stream — phase-1 backend for the chat rework (no API key, app router).
+// ---------------------------------------------------------------------------
+
+describe("groupConversationForJson (pure grouping)", () => {
+  test("emits a user item for user-text", () => {
+    const items = groupConversationForJson([
+      { type: "user-text", content: "hi there", timestamp: "2026-07-26T09:00:00Z" },
+    ]);
+    expect(items).toEqual([{ kind: "user", content: "hi there", timestamp: "2026-07-26T09:00:00Z" }]);
+  });
+
+  test("emits an assistant item with messageId when present", () => {
+    const items = groupConversationForJson([
+      { type: "assistant-text", content: "hello back", timestamp: "2026-07-26T09:00:01Z", messageId: "msg_1" },
+    ]);
+    expect(items).toEqual([{ kind: "assistant", content: "hello back", timestamp: "2026-07-26T09:00:01Z", messageId: "msg_1" }]);
+  });
+
+  test("omits messageId key entirely when absent (not undefined-valued)", () => {
+    const items = groupConversationForJson([
+      { type: "assistant-text", content: "no id", timestamp: "2026-07-26T09:00:01Z" },
+    ]);
+    expect(items[0]).toEqual({ kind: "assistant", content: "no id", timestamp: "2026-07-26T09:00:01Z" });
+    expect("messageId" in items[0]).toBe(false);
+  });
+
+  test("emits a thinking item", () => {
+    const items = groupConversationForJson([
+      { type: "assistant-thinking", content: "pondering...", timestamp: "2026-07-26T09:00:00Z" },
+    ]);
+    expect(items).toEqual([{ kind: "thinking", content: "pondering...", timestamp: "2026-07-26T09:00:00Z" }]);
+  });
+
+  test("groups consecutive tool calls + results into one tool_group with input and result", () => {
+    const items = groupConversationForJson([
+      { type: "assistant-tool-use", content: "Bash", toolName: "Bash", toolInput: '{"command":"ls"}', timestamp: "2026-07-26T09:00:00Z" },
+      { type: "user-tool-result", content: "file1\nfile2", timestamp: "2026-07-26T09:00:01Z" },
+    ]);
+    expect(items).toEqual([{
+      kind: "tool_group",
+      timestamp: "2026-07-26T09:00:00Z",
+      calls: [{ name: "Bash", input: '{"command":"ls"}', result: "file1\nfile2" }],
+    }]);
+  });
+
+  test("multiple consecutive tool calls collapse into one group, each with its own result", () => {
+    const items = groupConversationForJson([
+      { type: "assistant-tool-use", content: "Read", toolName: "Read", toolInput: "a.txt", timestamp: "2026-07-26T09:00:00Z" },
+      { type: "user-tool-result", content: "contents-a", timestamp: "2026-07-26T09:00:01Z" },
+      { type: "assistant-tool-use", content: "Read", toolName: "Read", toolInput: "b.txt", timestamp: "2026-07-26T09:00:02Z" },
+      { type: "user-tool-result", content: "contents-b", timestamp: "2026-07-26T09:00:03Z" },
+    ]);
+    expect(items.length).toBe(1);
+    expect(items[0].kind).toBe("tool_group");
+    const calls = (items[0] as any).calls;
+    expect(calls).toEqual([
+      { name: "Read", input: "a.txt", result: "contents-a" },
+      { name: "Read", input: "b.txt", result: "contents-b" },
+    ]);
+  });
+
+  test("tool call without a result yet (in-flight) has no result key", () => {
+    const items = groupConversationForJson([
+      { type: "assistant-tool-use", content: "Bash", toolName: "Bash", toolInput: "ls", timestamp: "2026-07-26T09:00:00Z" },
+    ]);
+    const calls = (items[0] as any).calls;
+    expect(calls).toEqual([{ name: "Bash", input: "ls" }]);
+    expect("result" in calls[0]).toBe(false);
+  });
+
+  test("a lone user-tool-result with no preceding tool call is skipped, like renderConversation", () => {
+    const items = groupConversationForJson([
+      { type: "user-tool-result", content: "orphaned", timestamp: "2026-07-26T09:00:00Z" },
+    ]);
+    expect(items).toEqual([]);
+  });
+
+  test("full turn: user, thinking, tool_group, assistant — in order", () => {
+    const items = groupConversationForJson([
+      { type: "user-text", content: "do the thing", timestamp: "2026-07-26T09:00:00Z" },
+      { type: "assistant-thinking", content: "let me check", timestamp: "2026-07-26T09:00:01Z" },
+      { type: "assistant-tool-use", content: "Bash", toolName: "Bash", toolInput: "ls", timestamp: "2026-07-26T09:00:01Z" },
+      { type: "user-tool-result", content: "a b c", timestamp: "2026-07-26T09:00:02Z" },
+      { type: "assistant-text", content: "Done!", timestamp: "2026-07-26T09:00:03Z", messageId: "msg_9" },
+    ]);
+    expect(items.map(i => i.kind)).toEqual(["user", "thinking", "tool_group", "assistant"]);
+  });
+});
+
+describe("GET /chat/api/messages (structured JSON snapshot)", () => {
+  test("returns isAgentRunning:true and a single user item when only a DB message exists (no session yet)", async () => {
+    const db = getDb();
+    const key = `snap-nosession-${Date.now()}`;
+    try {
+      db.prepare(
+        `INSERT INTO messages (channel, sender, content, session_key) VALUES ('web','web-ui',?,?)`,
+      ).run("hello, no session yet", key);
+
+      const res = await app.fetch(new Request(`http://localhost/chat/api/messages?sessionKey=${key}`));
+      expect(res.status).toBe(200);
+      const json = await res.json() as any;
+      expect(json.isAgentRunning).toBe(true);
+      expect(json.items).toEqual([
+        { kind: "user", content: "hello, no session yet", timestamp: expect.any(String) },
+      ]);
+    } finally {
+      db.prepare(`DELETE FROM messages WHERE session_key = ?`).run(key);
+    }
+  });
+
+  test("returns empty snapshot with isAgentRunning:false for an unknown/empty session", async () => {
+    const res = await app.fetch(new Request(`http://localhost/chat/api/messages?sessionKey=empty-does-not-exist-${Date.now()}`));
+    expect(res.status).toBe(200);
+    const json = await res.json() as any;
+    expect(json.isAgentRunning).toBe(false);
+    expect(json.items).toEqual([]);
+  });
+
+  test("merges DB user message + JSONL thinking/tool_group/assistant into one ordered, grouped snapshot", async () => {
+    const db = getDb();
+    const key = `snap-full-${Date.now()}`;
+    const sessionId = crypto.randomUUID();
+    const projectDir = join(homedir(), ".claude", "projects", `snaptest-${Date.now()}`);
+
+    try {
+      // DB message deliberately timestamped before the JSONL entries so the
+      // merge/sort puts it first regardless of wall-clock test run time.
+      db.prepare(
+        `INSERT INTO messages (channel, sender, content, session_key, created_at) VALUES ('web','web-ui',?,?,'2026-07-26 09:00:00')`,
+      ).run("Hello agent", key);
+      db.prepare(
+        `INSERT INTO trigger_sessions (trigger_name, session_key, session_id) VALUES ('web-chat', ?, ?)`,
+      ).run(key, sessionId);
+
+      mkdirSync(projectDir, { recursive: true });
+      const jsonlPath = join(projectDir, `${sessionId}.jsonl`);
+      const lines = [
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-07-26T10:00:01Z",
+          message: {
+            role: "assistant",
+            id: "msg_1",
+            stop_reason: "tool_use",
+            content: [
+              { type: "thinking", thinking: "let me check the files" },
+              { type: "tool_use", id: "tu_1", name: "Bash", input: { command: "ls" } },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-07-26T10:00:02Z",
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_1", content: "file1\nfile2" }] },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-07-26T10:00:03Z",
+          message: {
+            role: "assistant",
+            id: "msg_2",
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "Done!" }],
+          },
+        }),
+      ];
+      writeFileSync(jsonlPath, lines.join("\n"));
+
+      const res = await app.fetch(new Request(`http://localhost/chat/api/messages?sessionKey=${key}`));
+      expect(res.status).toBe(200);
+      const json = await res.json() as any;
+
+      // Agent process isn't actually running and the JSONL turn ended cleanly.
+      expect(json.isAgentRunning).toBe(false);
+
+      expect(json.items.map((i: any) => i.kind)).toEqual(["user", "thinking", "tool_group", "assistant"]);
+
+      expect(json.items[0]).toEqual({ kind: "user", content: "Hello agent", timestamp: "2026-07-26T09:00:00Z" });
+      expect(json.items[1].content).toContain("let me check the files");
+      expect(json.items[2].calls).toEqual([{ name: "Bash", input: JSON.stringify({ command: "ls" }, null, 2), result: "file1\nfile2" }]);
+      expect(json.items[3]).toEqual({ kind: "assistant", content: "Done!", timestamp: "2026-07-26T10:00:03Z", messageId: "msg_2" });
+    } finally {
+      db.prepare(`DELETE FROM messages WHERE session_key = ?`).run(key);
+      db.prepare(`DELETE FROM trigger_sessions WHERE session_key = ?`).run(key);
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("POST /chat/api/messages (JSON send)", () => {
+  test("inserts a message row, touches the session, and returns ok:true with the new message", async () => {
+    const db = getDb();
+    const key = `post-json-${Date.now()}`;
+    try {
+      const res = await app.fetch(new Request(`http://localhost/chat/api/messages?sessionKey=${key}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "test ping" }),
+      }));
+      expect(res.status).toBe(200);
+      const json = await res.json() as any;
+      expect(json.ok).toBe(true);
+      expect(json.message.content).toBe("test ping");
+      expect(typeof json.message.id).toBe("number");
+      expect(typeof json.message.timestamp).toBe("string");
+
+      const row = db.prepare("SELECT content, sender, channel FROM messages WHERE channel = 'web' AND session_key = ?").get(key) as any;
+      expect(row).not.toBeNull();
+      expect(row.content).toBe("test ping");
+      expect(row.sender).toBe("web-ui");
+
+      const sess = db.prepare("SELECT title FROM chat_sessions WHERE session_key = ?").get(key) as any;
+      expect(sess).not.toBeNull();
+      expect(sess.title).toBe("test ping");
+    } finally {
+      db.prepare("DELETE FROM messages WHERE session_key = ?").run(key);
+      db.prepare("DELETE FROM chat_sessions WHERE session_key = ?").run(key);
+    }
+  });
+
+  test("trims whitespace-only content and returns 400", async () => {
+    const res = await app.fetch(new Request(`http://localhost/chat/api/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "   " }),
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  test("returns 400 on missing content field", async () => {
+    const res = await app.fetch(new Request(`http://localhost/chat/api/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  test("returns 400 on invalid JSON body", async () => {
+    const res = await app.fetch(new Request(`http://localhost/chat/api/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "not json at all",
+    }));
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /chat/api/sessions (JSON list)", () => {
+  test("includes _default and a freshly created session", async () => {
+    const db = getDb();
+    const key = `sesslist-${Date.now()}`;
+    db.prepare(`INSERT INTO chat_sessions (session_key, channel, title) VALUES (?, 'web', 'My List Test')`).run(key);
+    try {
+      const res = await app.fetch(new Request(`http://localhost/chat/api/sessions`));
+      expect(res.status).toBe(200);
+      const json = await res.json() as any;
+      expect(Array.isArray(json.sessions)).toBe(true);
+      expect(json.sessions.some((s: any) => s.session_key === "_default")).toBe(true);
+      const created = json.sessions.find((s: any) => s.session_key === key);
+      expect(created).toBeDefined();
+      expect(created.title).toBe("My List Test");
+      expect(typeof created.message_count).toBe("number");
+    } finally {
+      db.prepare(`DELETE FROM chat_sessions WHERE session_key = ?`).run(key);
+    }
+  });
+
+  test("excludes archived sessions by default, includes them with includeArchived=true", async () => {
+    const db = getDb();
+    const key = `sesslist-archived-${Date.now()}`;
+    db.prepare(`INSERT INTO chat_sessions (session_key, channel, title, archived_at) VALUES (?, 'web', 'archived', datetime('now'))`).run(key);
+    try {
+      const res1 = await app.fetch(new Request(`http://localhost/chat/api/sessions`));
+      const json1 = await res1.json() as any;
+      expect(json1.sessions.some((s: any) => s.session_key === key)).toBe(false);
+
+      const res2 = await app.fetch(new Request(`http://localhost/chat/api/sessions?includeArchived=true`));
+      const json2 = await res2.json() as any;
+      const found = json2.sessions.find((s: any) => s.session_key === key);
+      expect(found).toBeDefined();
+      expect(found.archived_at).not.toBeNull();
+    } finally {
+      db.prepare(`DELETE FROM chat_sessions WHERE session_key = ?`).run(key);
+    }
+  });
+
+  test("matches listWebSessions() output shape directly", () => {
+    const rows = listWebSessions(false);
+    expect(rows.length).toBeGreaterThan(0);
+    const def = rows.find(r => r.session_key === "_default");
+    expect(def).toBeDefined();
+  });
+});
+
+describe("GET /chat/stream (SSE, keyless app-router mount)", () => {
+  test("responds with text/event-stream content-type and an init frame", async () => {
+    const key = `sse-app-router-${Date.now()}`;
+    const res = await app.fetch(new Request(`http://localhost/chat/stream?sessionKey=${key}`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = res.body!.getReader();
+    const { value } = await reader.read();
+    const text = new TextDecoder().decode(value);
+    expect(text).toContain("event: init");
+    expect(text).toContain('"isAgentRunning"');
+    await reader.cancel();
   });
 });
