@@ -36,6 +36,8 @@ mkdir -p "$WORKSPACE/memory/projects" \
          "$WORKSPACE/memory/entities" \
          "$WORKSPACE/memory/decisions" \
          "$WORKSPACE/memory/workflows" \
+         "$WORKSPACE/memory/responsibilities" \
+         "$WORKSPACE/memory/notes" \
          "$WORKSPACE/.index" \
          "$WORKSPACE/projects" \
          "$WORKSPACE/agents" \
@@ -262,14 +264,64 @@ echo "  Database ready (schema + migrations applied)"
 sqlite3 "$DB" "DELETE FROM triggers WHERE name IN ('daily-cleanup', 'memory-cleanup');" 2>/dev/null || true
 
 # Ensure dreaming trigger exists (nightly memory consolidation — replaces legacy memory-cleanup)
-sqlite3 "$DB" "INSERT OR IGNORE INTO triggers (name, type, description, channel, schedule, prompt, session_mode) VALUES (
-  'dreaming', 'cron', 'Nightly cognitive consolidation — session replay, memory cleanup, knowledge updates', 'internal', '0 3 * * *', '', 'ephemeral');" || echo "  ⚠ dreaming trigger insert failed (non-fatal)"
+# model_key='dreaming' routes it to models.dreaming (opus by default) instead of the
+# cheaper models.cron — the nightly synthesis is the one place where reasoning depth
+# pays off directly, and it runs once a day offline.
+sqlite3 "$DB" "INSERT OR IGNORE INTO triggers (name, type, description, channel, schedule, prompt, session_mode, model_key) VALUES (
+  'dreaming', 'cron', 'Nightly cognitive consolidation — session replay, memory cleanup, knowledge updates', 'internal', '0 3 * * *', '', 'ephemeral', 'dreaming');" || echo "  ⚠ dreaming trigger insert failed (non-fatal)"
 
-# Create dreaming trigger prompt
+# Upgrade existing containers: adopt the dedicated model key, but never override a
+# deliberate user choice (only fills NULL/empty).
+sqlite3 "$DB" "UPDATE triggers SET model_key = 'dreaming'
+  WHERE name = 'dreaming' AND (model_key IS NULL OR TRIM(model_key) = '');" 2>/dev/null || true
+
+# Create / upgrade the dreaming trigger prompt.
+# The workspace copy is user-customizable, so local edits must never be clobbered.
+# Upgrade rule: refresh the live file only when we can prove the user never touched
+# it — that is, it is byte-identical to the default we last shipped. From now on that
+# baseline is recorded next to it in .prompt.shipped.md.
+#
+# DREAM_KNOWN_SUMS bootstraps the same check for containers created *before*
+# .prompt.shipped.md existed, where no baseline is on disk to compare against. It
+# holds the sha256 of the last default shipped without tracking, reproducible with:
+#   git show 9586dbf:app/defaults/triggers/dreaming/prompt.md | sha256sum
+# It is a one-time bootstrap and does not need to grow when the default changes
+# again: every container running this code writes .prompt.shipped.md, which takes
+# over from the checksum path on all later upgrades.
 mkdir -p "$WORKSPACE/triggers/dreaming"
-if [ ! -f "$WORKSPACE/triggers/dreaming/prompt.md" ]; then
-  cp /atlas/app/defaults/triggers/dreaming/prompt.md "$WORKSPACE/triggers/dreaming/prompt.md"
+DREAM_DEFAULT=/atlas/app/defaults/triggers/dreaming/prompt.md
+DREAM_LIVE="$WORKSPACE/triggers/dreaming/prompt.md"
+DREAM_SHIPPED="$WORKSPACE/triggers/dreaming/.prompt.shipped.md"
+DREAM_KNOWN_SUMS="08b72de4346e3015ef143d96bba42c033b301dcfc77fc0286a89f47e9500d30c"
+
+if [ ! -f "$DREAM_LIVE" ]; then
+  cp "$DREAM_DEFAULT" "$DREAM_LIVE"
+  cp "$DREAM_DEFAULT" "$DREAM_SHIPPED"
   echo "  Created dreaming trigger prompt"
+else
+  DREAM_UNMODIFIED=0
+  if [ -f "$DREAM_SHIPPED" ] && cmp -s "$DREAM_LIVE" "$DREAM_SHIPPED"; then
+    DREAM_UNMODIFIED=1
+  else
+    DREAM_LIVE_SUM=$(sha256sum "$DREAM_LIVE" 2>/dev/null | cut -d' ' -f1 || true)
+    for known in $DREAM_KNOWN_SUMS; do
+      if [ "$DREAM_LIVE_SUM" = "$known" ]; then
+        DREAM_UNMODIFIED=1
+      fi
+    done
+  fi
+
+  if [ "$DREAM_UNMODIFIED" = "1" ]; then
+    if cmp -s "$DREAM_DEFAULT" "$DREAM_LIVE"; then
+      : # already current
+    else
+      cp "$DREAM_DEFAULT" "$DREAM_LIVE"
+      echo "  Upgraded dreaming trigger prompt (workspace copy was unmodified)"
+    fi
+    cp "$DREAM_DEFAULT" "$DREAM_SHIPPED"
+  else
+    echo "  Kept customized dreaming trigger prompt — new default at $DREAM_DEFAULT"
+  fi
 fi
 
 # Always refresh dreaming trigger filter — system-managed (not user-customizable),

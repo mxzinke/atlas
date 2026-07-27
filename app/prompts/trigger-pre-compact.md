@@ -7,6 +7,8 @@ Write to `memory/journal/{{today}}.md` (append):
 - Promises or acknowledgments sent to external parties
 - Anything still in progress or pending follow-up
 
-Additionally, modify / extend documentation of projects in `memory/projects/<project-name>.md`.
+Additionally, extend the memory files this session touched — whichever they are (project notes, entities, workflows, notes). Prefer extending an existing file over creating a new one mid-session.
+
+If something you recorded earlier turned out to be wrong, mark it (`invalidated`, `superseded_by`) rather than overwriting it.
 
 Write to `memory/MEMORY.md` only for genuinely new long-term info (contact preferences, relationships, standing patterns).

@@ -27,6 +27,8 @@ export interface ModelsConfig {
   main: string;
   trigger: string;
   cron: string;
+  /** Nightly memory consolidation (dreaming trigger) — deep cross-session synthesis. */
+  dreaming: string;
   subagent_review: string;
   hooks: string;
 }
@@ -121,7 +123,7 @@ export type ConfigSource = "env" | "runtime" | "file" | "default";
 
 const DEFAULTS: AtlasConfig = {
   agent: { name: "Atlas", email: "" },
-  models: { main: "sonnet", trigger: "opus", cron: "sonnet", subagent_review: "sonnet", hooks: "haiku" },
+  models: { main: "sonnet", trigger: "opus", cron: "sonnet", dreaming: "opus", subagent_review: "sonnet", hooks: "haiku" },
   memory: { load_memory_md: true, load_journal_days: 7 },
   signal: { number: "", history_turns: 20, whitelist: [] },
   email: {
@@ -178,6 +180,7 @@ const ENV_MAPPINGS: EnvMapping[] = [
   { env: "ATLAS_MODEL_MAIN", path: "models.main", type: "string" },
   { env: "ATLAS_MODEL_TRIGGER", path: "models.trigger", type: "string" },
   { env: "ATLAS_MODEL_CRON", path: "models.cron", type: "string" },
+  { env: "ATLAS_MODEL_DREAMING", path: "models.dreaming", type: "string" },
   { env: "ATLAS_MODEL_SUBAGENT_REVIEW", path: "models.subagent_review", type: "string" },
   { env: "ATLAS_MODEL_HOOKS", path: "models.hooks", type: "string" },
   { env: "ATLAS_MEMORY_LOAD_MEMORY_MD", path: "memory.load_memory_md", type: "boolean" },

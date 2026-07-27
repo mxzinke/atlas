@@ -296,17 +296,20 @@ Prompt:         Run a system health check (disk, memory, services).
 
 Nightly cognitive consolidation — inspired by how memory consolidation works during sleep. Runs a multi-phase process:
 
-1. **Session Replay** — Extracts the last 24h of Claude Code sessions using `extract-sessions.py`, identifying key decisions, learnings, mistakes, and new entities
-2. **Memory Consolidation** — Writes journal entries, creates/updates entity and decision files, discovers workflow patterns
-3. **Memory Hygiene** — Cleans redundancies, resolves broken wikilinks, archives stale entries, validates frontmatter
-4. **External Verification** — Checks current state of external resources (open PRs, deployments, task status)
-5. **Skill Creation** — Can create new skills from recurring patterns observed across sessions
-6. **Task Hygiene** — Reviews open tasks and goals, closes completed ones, flags stale items
+1. **Session Replay** — Extracts the last 24h of Claude Code sessions using `extract-sessions.py` and hands each to a `session-analyzer` subagent (haiku, in parallel) for extraction
+2. **Synthesis** — The consolidation session itself works out what the day *meant*: patterns across sessions and across days, user corrections, second-order consequences, open loops
+3. **Writing** — Journal entry (mandatory), then folding new knowledge into memory; the agent chooses the form, extends existing files over creating near-duplicates, and appends dated lines to playbooks rather than rewriting them
+4. **Reconciliation** — Verifies memory against external reality and supersedes outdated facts (`invalidated`, `superseded_by`) instead of overwriting them
+5. **Hygiene** — Index size, contradictions, broken wikilinks, redundancy, staleness, frontmatter
+6. **Skill Creation** — Can create skills from tool-specific patterns seen at least twice
 
 - **Schedule:** `0 3 * * *` (daily at 03:00)
 - **Session Mode:** ephemeral
+- **Model:** `model_key='dreaming'` → `models.dreaming` (opus by default). The nightly synthesis is where reasoning depth pays off, and it runs offline once a day with no user waiting.
 - **Default prompt:** `app/defaults/triggers/dreaming/prompt.md`
 - **Session extractor:** `app/triggers/cron/extract-sessions.py`
+
+The workspace copy at `workspace/triggers/dreaming/prompt.md` is user-customizable. On upgrade, `init.sh` refreshes it only when it is byte-identical to the default previously shipped (tracked in `.prompt.shipped.md`); customized prompts are left untouched and the new default is logged instead.
 
 The session extractor (`extract-sessions.py`) parses JSONL session files, filtering out system messages and tool results to produce a condensed conversation summary within a configurable token budget:
 

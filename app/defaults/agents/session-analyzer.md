@@ -44,10 +44,10 @@ Return a structured summary in exactly this format:
 - <things the user corrected or pushed back on — these are high-priority for memory>
 
 ### New Entities
-- <services, tools, people, projects mentioned for the first time>
+- <services, tools, people, projects, or any other thing worth remembering, mentioned for the first time>
 
 ### Changed Facts
-- <things that are no longer true, outdated information discovered>
+- <things that are no longer true. For each: what was believed before, what is true now, and — if visible in the transcript — since when. These become supersession candidates, so state the old and new claim explicitly rather than only the new one.>
 
 ### User Preferences
 - <explicit or implicit preferences — tools, workflow, communication style>
