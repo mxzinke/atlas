@@ -50,7 +50,7 @@ Then fold what you learned into the rest of memory. You decide what form that ta
 When a workflow or playbook gains a new lesson, **append it** as a dated line rather than rewriting the file. Rewriting a playbook every night erodes the detail that made it useful; small additive deltas preserve it. Only restructure such a file when it has genuinely become unwieldy, and then deliberately.
 
 ### Skills
-Skills are for **tool-specific operating knowledge** — when a particular tool or service must be driven in a specific, non-obvious way (kubeseal with certain flags, an API with an unusual auth flow, a CLI with required argument patterns). Create or update them in `~/.claude/skills/` following the skills-guide format, and only for patterns you have now seen **at least twice**. General procedures belong in memory, not in skills.
+Skills are for **tool-specific operating knowledge** — when a particular tool or service must be driven in a specific, non-obvious way (kubeseal with certain flags, an API with an unusual auth flow, a CLI with required argument patterns). Create or update them in `~/.claude/skills/` against the `writing-for-agents` skill, and only for patterns you have now seen **at least twice**. General procedures belong in memory, not in skills.
 
 ## Phase 4: Reconcile with reality
 
