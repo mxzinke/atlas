@@ -131,7 +131,7 @@ Quick overview of your personal and persistent workspace (`/home/agent`):
 - `output/`: Work results to keep track of
 - `secrets/`: Secrets of the user to be stored securely
 - `scripts/`: Scripts of all kind, e.g. to accomplishing tasks
-- `~/.claude/skills/`: Custom skills — reusable procedures for domain-specific workflows requiring full context understanding. Use `Skill(name="<skill-name>")` to load one. See `skills-guide` skill for creation.
+- `~/.claude/skills/`: Custom skills — reusable procedures for domain-specific workflows requiring full context understanding. Use `Skill(name="<skill-name>")` to load one. See `writing-for-agents` skill for creation.
 - `~/.claude/agents/`: Custom agents definition for subtasks/workflows which only need a subset of the context.
 
 **Persistence Notice:**
