@@ -1,3 +1,8 @@
+---
+source: https://github.com/mattpocock/skills/tree/main/skills/productivity/writing-for-agents
+license: MIT, Copyright (c) 2026 Matt Pocock
+---
+
 # Skill mechanics
 
 The skill-specific branch of [`writing-for-agents`](SKILL.md): what changes when the document is a skill (where it lives, frontmatter, the invocation choice, router skills, and whether it should be a skill at all). Everything else about writing it is the universal reference in `SKILL.md`.
@@ -66,7 +71,3 @@ Run the skill on a real task, then read the failure as a pointer or hierarchy bu
 - It never fired → a branch is missing from the description, or its wording is weak.
 - It fired on the wrong task → the description claims a branch the body does not handle.
 - It fired and the agent skipped the rules → they sit below the steps that bury them, or the completion criterion never demanded them.
-
----
-
-Adapted from [`writing-for-agents`](https://github.com/mattpocock/skills/tree/main/skills/productivity/writing-for-agents) by Matt Pocock, MIT licensed. Copyright (c) 2026 Matt Pocock.
